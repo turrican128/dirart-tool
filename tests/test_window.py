@@ -1,21 +1,38 @@
-"""The window, driven through its public methods. Skipped where Tk has no display."""
+"""The window, driven through its public methods. Skipped where Tk has no display.
+
+One hidden Tk root serves the whole module and every test's window is a
+Toplevel on it. Building a second Tcl interpreter in a process while the
+first is being torn down is a race Tcl loses now and then ("Can't find a
+usable tk.tcl", 'invalid command name "tcl_findLibrary"'), so the tests
+never do it; `App(master=...)` exists for exactly this.
+"""
 import pytest
 
 import dirarttool as dt
 
 
-@pytest.fixture
-def app():
+@pytest.fixture(scope="module")
+def master():
     import tkinter
     try:
-        a = dt.App()
+        root = tkinter.Tk()
     except tkinter.TclError as exc:   # no display (Linux CI): the engine tests still run
         pytest.skip(f"no Tk display: {exc}")
+    root.withdraw()
+    yield root
+    root.destroy()
+
+
+@pytest.fixture
+def app(master):
+    a = dt.App(master=master)
     yield a
-    try:
-        a.root.destroy()
-    except Exception:
-        pass
+    a.root.destroy()
+
+
+def test_window_hangs_on_the_master_root(app, master):
+    assert app.root.master is master
+    assert app.root.winfo_toplevel() is app.root
 
 
 def test_ticks_survive_apply_and_undo(app, fixture):

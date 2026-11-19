@@ -557,11 +557,16 @@ class App:
     script can drive the window the way a person would.
     """
 
-    def __init__(self, scale=2):
+    def __init__(self, scale=2, master=None):
+        """`master`: an existing Tk root to hang the window on (then it is a
+        Toplevel). Tests use it so one process never builds a second Tcl
+        interpreter, which Tcl does not always survive. Normal runs leave it
+        None and get their own root."""
         import tkinter as tk
         from tkinter import ttk
         self.tk, self.ttk = tk, ttk
         self.scale = scale
+        self.master = master
         self.path = None
         self.image = None           # the in-memory .d64
         self.on_disk = None         # what the file held when opened or last saved
@@ -574,7 +579,7 @@ class App:
         self.warned_about_files = False
         self._glyphs = {}           # (screen code, reversed) -> PhotoImage
 
-        self.root = tk.Tk()
+        self.root = tk.Tk() if master is None else tk.Toplevel(master)
         self.root.title(f"dirarttool {__version__}")
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
         self._build()
