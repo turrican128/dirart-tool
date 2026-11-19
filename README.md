@@ -140,7 +140,18 @@ python -m pytest tests/ -q
 
 The tests need only Python and pytest. The fixture disks are committed as binaries; one of them is Baracuda's own test disk, which is the acceptance test for the Replacer.
 
-Release binaries are built by GitHub Actions with PyInstaller on `windows-latest` and `ubuntu-latest` when a `v*` tag is pushed.
+### QA gate
+
+After any change, before any tag:
+
+```sh
+python tools/qa.py            # everything; read the last line
+python tools/qa.py --quick    # without the window checklist
+```
+
+It runs the whole test suite, a stdlib-only smoke run of the tool, a byte-for-byte comparison of the Replacer's output on Baracuda's disk against the committed golden image (`tests/fixtures/golden-baracuda-replaced.d64`, rebuilt and verified by `tools/make_golden.py`), and `tools/qa_window.py`, which opens the real window and walks the six-item release checklist by calling the same methods the buttons call. The last line is `QA: PASS` or `QA: FAIL <stage>`; nothing else counts.
+
+Release binaries are built by GitHub Actions with PyInstaller on `windows-latest` and `ubuntu-latest` when a `v*` tag is pushed. The workflow runs the tests first and refuses to build if they fail.
 
 ## Credits
 

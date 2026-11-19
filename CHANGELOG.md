@@ -17,3 +17,5 @@ The Replacer.
 - The 1541's closing-quote rule is followed on screen: a name padded with $A0 shows
   its quote where the drive would print it.
 - A greyed Mask tab marks where v2 goes.
+- QA gate: `tools/qa.py` runs the suite, a stdlib smoke run, a golden-image comparison on
+  Baracuda's disk and the window checklist, and ends with one PASS or FAIL line.
