@@ -316,6 +316,104 @@ def write_atomically(out, data):
 
 
 # --------------------------------------------------------------------------
+# rendering rules: name bytes -> cells, and the glyphs to draw them with
+# --------------------------------------------------------------------------
+
+# The uppercase/graphics half of the C64 character ROM (901225-01), 2048
+# bytes, zlib-compressed and base64-encoded so the binary needs no file next
+# to it. Regenerate with tools/make_charset.py <chargen.bin>.
+CHARSET_B64 = (
+    "eNpdVD1rG0sUnSCQUggpvGoKEf2FhYBRMUhdfoewYV4RY1w5Lsx+oMJxJYxTvAEH/Y7XSWwhDIb9"
+    "CwoqpnpEQkVWIHLfuXdnbSVHuzt7P8+5w6yMvbgYnxqljY2tterGWr6UsePx2Bp1fQ7v+bWKx+Pr"
+    "8TgO65jjFxZxRKXOaIZR79vA+UCh5hK1aiyI1dnn5NPZ2ZmyV3F8wfmWYYSv6sdmR2yuQ3/TRDyW"
+    "vlrZkF8tWqHXp+Qz+sFArRIv8uJmW0fgMxHDqPZf0U10elCGdbWNwqDSUr2LkiR6p2qITwmP2NYS"
+    "flbpIXTcaHVq0dd+hC4z+NuOFGgkD94o0m2Fu413FBoyVhrGWr80R0DFR2RKNUQo+l1c8VxaD6AA"
+    "um2zLfpts8fzNzvvbdJsYt9vmmxjX244P4YelozZ+eJ1yHGeQQmvFt4OSCLdEXoWcKnbIL4UHl0l"
+    "EuHxtjdMkt5Q6YDa/+dSv0YB7QC4VxseQfe6LRlxsFlhnQuI5qvLQa/TajRand7gcsWeEGkIlIkB"
+    "80JwkiTJsPc2nB8cEKVa3Z7WuY+NiX2OfJw83jdr+dw1A3gOroMQIjzm8yji+3WuxvDq5ERRMup3"
+    "W4039UybgIqejqatFM0Dnp8/fOC7EcBBtunXodys5mntB1W/X+2j6gJiV73KUtcnQ2gkT/TWzsqW"
+    "vJp3FdAKeE0+Ukr1blZOnoe5w/kuy+A7juXu/n7mcvK5y5xzNHGOL8rdbMb+2wd4H24pm81uZ7Ms"
+    "rDOO3zvEEZW63DNy+r4DHpaEmilqaSbI6PFL+vXx8ZHcXZbdc75j5MJX9WNzKzbXoX++RzyTvp5c"
+    "yK8WT+j1Nf2CfjBQS+JFXrbf+QJ8ecHIafdfMSm+NShnXbucMKi0pB9FmhY/qIb4SHjEdk7h58gv"
+    "oGPi6ZtDX/cvdOXLf9ycQCN58BaF3xHuHd5RmKvcScPM+5fmCFB2REZ0EKHod3/Hc3m/hALodvud"
+    "6Hf7Nc+/33536X6PfZ/s2ca+TDg/gx6WjNn54nXBcZ6BhNcL7xYkhd8KPQuY+h2Ip8Ljq0Q5Nz/X"
+    "izRdL8gH1P4/l/q1CNgFwN3v8gh+vSllxGW3j3UkUGrUny7X2/JwKLfr5bTPnhA5CCjPgPyF4ClN"
+    "08X6Zzg/OCBE5WbtvdFZnmfaIB8nj/fNOT53+wCeg+sgRCk8RqOi4Pt1rsPi7umJVDpfbcrDr3qm"
+    "bsDLp0+/Iagdjaqv//n5EMBBttWbRqvbHyW1H1SrVbWPxN+a2FWvVsvXJ0NoJE/01s7Klryatx9Q"
+    "BrwmHylV9W5WTp6HucP55j8NqmesY/8D59b8Kg=="
+)
+
+_CHARSET = None
+
+
+def charset():
+    """The 2048 ROM bytes, decoded once."""
+    global _CHARSET
+    if _CHARSET is None:
+        import base64
+        import zlib
+        _CHARSET = zlib.decompress(base64.b64decode("".join(CHARSET_B64.split())))
+        if len(_CHARSET) != 2048:
+            raise RuntimeError("embedded charset is damaged")
+    return _CHARSET
+
+
+def glyph(screen_code):
+    """The 8 bitmap rows of a screen code, bit set = foreground."""
+    cs = charset()
+    code = screen_code & 0x7F                 # the ROM half holds 128 glyphs;
+    return cs[code * 8:code * 8 + 8]          # bit 7 of a code means reversed
+
+
+def petscii_to_screen(b):
+    """PETSCII byte -> (screen code, reversed), as a listing shows it in quotes.
+
+    This is the C64's own table. Control codes ($00-1F, $80-9F) have no glyph
+    of their own; inside quotes the machine prints them as the reversed form
+    of the character 64 (or 128) places along, which is what the second
+    value says to do. $FF is pi and shows as $5E, the one exception.
+    """
+    if b == 0xFF:
+        return 0x5E, False
+    if b < 0x20:
+        return b + 0x80, True
+    if b < 0x40:
+        return b, False
+    if b < 0x60:
+        return b - 0x40, False
+    if b < 0x80:
+        return b - 0x20, False
+    if b < 0xA0:
+        return b + 0x40, True
+    if b < 0xC0:
+        return b - 0x40, False
+    return b - 0x80, False
+
+
+def quote_column(name):
+    """Where the 1541 puts the closing quote: at the first $A0, else after cell 16."""
+    cut = bytes(name).find(bytes([PAD_SHIFTED]))
+    return 16 if cut == -1 else cut
+
+
+def listing_cells(name):
+    """The 16 cells a listing draws for a name: (petscii byte, reversed, after_quote).
+
+    The drive prints the name up to the first $A0, then the closing quote,
+    then whatever bytes follow -- that is the hidden-name trick. Every $A0
+    is shown as a space. A cell after the quote still occupies its column,
+    so the window can keep one click target per name byte.
+    """
+    q = quote_column(name)
+    cells = []
+    for i, b in enumerate(bytes(name)):
+        shown = 0x20 if b == PAD_SHIFTED else b
+        _, rev = petscii_to_screen(shown)
+        cells.append((shown, rev, i >= q))
+    return cells
+
+
+# --------------------------------------------------------------------------
 # command line
 # --------------------------------------------------------------------------
 
