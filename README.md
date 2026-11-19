@@ -69,7 +69,7 @@ Double-click the exe for the window. On Windows a console window opens behind it
 
 ## The window
 
-1. **Open** a `.d64`. The directory is drawn the way `LOAD"$",8` lists it, with the real C64 glyphs. Art rows are ticked, real files are not, and a grey number on the left is the row index the command line uses.
+1. **Open** a `.d64`, or **drop one onto the window** from Explorer. The directory is drawn the way `LOAD"$",8` lists it, with the real C64 glyphs. Art rows are ticked, real files are not, and a grey number on the left is the row index the command line uses. (Dropping onto the window is Windows-only; it talks to the shell directly, no extra package. Dropping a `.d64` onto `dirarttool.exe` itself works too, on any system: the file is passed as the one argument and the window opens with it.)
 2. **Left-click** any cell, in the directory or in the PETSCII palette below, to make it *From*. **Right-click** one to make it *To*. The two boxes show the glyph and its hex.
 3. **Apply.** The status says how many cells changed. **Undo** takes it back.
 4. **Save** rewrites the file; **Save As** suggests `<name>-dirart.d64` next to it.

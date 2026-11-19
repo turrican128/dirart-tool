@@ -4,8 +4,9 @@
 
 The Replacer.
 
-- Window: open a `.d64`, see its directory drawn with the real C64 glyphs, left-click a
-  character to pick it as From, right-click one as To, tick the rows, Apply.
+- Window: open a `.d64`, or drop one onto the window (Windows), see its directory drawn with
+  the real C64 glyphs, left-click a character to pick it as From, right-click one as To, tick
+  the rows, Apply.
 - Undo, Save, Save As (suggests `<name>-dirart.d64`), unsaved-changes prompts.
 - Art rows are ticked by default; real files are not, and changing one asks first,
   because it changes the file's LOAD name.

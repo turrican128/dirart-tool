@@ -64,3 +64,44 @@ def test_apply_does_not_leak_widgets(app, fixture):
     assert app.undo()
     assert app.apply() == 2
     assert len(app.dir_canvas.winfo_children()) == before
+
+
+def test_drop_paths_opens_the_first_d64_and_ignores_the_rest(app, fixture):
+    import tkinter.messagebox as mb
+    shown = []
+    mb.showerror = lambda *a, **k: shown.append(a[1])
+    disk = str(fixture("baracuda-dir-file.d64"))
+    assert app.drop_paths([disk, str(fixture("examples.d64"))]) is True
+    assert app.path == disk and len(app.rows) == 3
+    assert app.drop_paths([disk.replace(".d64", ".txt")]) is False     # not a disk: told, not crashed
+    assert shown and app.path == disk
+
+
+def test_shell_drop_message_opens_the_disk(app, fixture):
+    """A real WM_DROPFILES, built the way Explorer builds it, lands on the canvas."""
+    import ctypes
+    import sys
+    if sys.platform != "win32":
+        pytest.skip("shell drop messages are a Windows thing")
+    from ctypes import wintypes
+    disk = str(fixture("baracuda-dir-file.d64"))
+    app.root.update()
+    payload = (disk + "\0\0").encode("utf-16-le")
+    header = ctypes.create_string_buffer(20)
+    ctypes.memmove(header, (20).to_bytes(4, "little") + bytes(12) + (1).to_bytes(4, "little"), 20)
+    size = 20 + len(payload)
+    kernel32, user32 = ctypes.windll.kernel32, ctypes.windll.user32
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    hglobal = kernel32.GlobalAlloc(0x0042, size)                       # GMEM_MOVEABLE | GMEM_ZEROINIT
+    p = kernel32.GlobalLock(hglobal)
+    ctypes.memmove(p, header.raw, 20)
+    ctypes.memmove(p + 20, payload, len(payload))
+    kernel32.GlobalUnlock(hglobal)
+    user32.SendMessageW(app.dir_canvas.winfo_id(), 0x0233, hglobal, 0)   # WM_DROPFILES
+    app.root.update()
+    assert app.path == disk and len(app.rows) == 3

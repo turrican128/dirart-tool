@@ -94,6 +94,37 @@ def main():
           and any(k == "error" for k, _ in asked),
           "opening a .txt shows an error dialog, the window and the loaded disk survive")
 
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        fresh = shutil.copy(os.path.join(FIX, "baracuda-dir-file.d64"), os.path.join(tmp, "dropped.d64"))
+        app.row_vars[demo.index].set(False)          # leave examples.d64 clean, no save prompt
+        app.undo()
+        app.root.update()
+        payload = (fresh + "\0\0").encode("utf-16-le")
+        hdr = (20).to_bytes(4, "little") + bytes(12) + (1).to_bytes(4, "little")
+        k, u = ctypes.windll.kernel32, ctypes.windll.user32
+        k.GlobalAlloc.restype = wintypes.HGLOBAL
+        k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        k.GlobalLock.restype = ctypes.c_void_p
+        k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+        k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+        u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        h = k.GlobalAlloc(0x42, 20 + len(payload))
+        p = k.GlobalLock(h)
+        ctypes.memmove(p, hdr, 20)
+        ctypes.memmove(p + 20, payload, len(payload))
+        k.GlobalUnlock(h)
+        u.SendMessageW(app.dir_canvas.winfo_id(), 0x0233, h, 0)      # WM_DROPFILES, as Explorer sends it
+        app.root.update()
+        check(6, app.path == fresh and len(app.rows) == 3,
+              "a .d64 dropped on the directory canvas (shell WM_DROPFILES) opens")
+        app.set_from(0xD6)
+        app.set_to(0xD1)
+        app.apply()                                  # unsaved again, so item 8 has something to ask about
+    else:
+        print("--   6. drop test skipped: not Windows")
+
     asked.clear()
     app.quit()
     alive = app.root.winfo_exists() == 1
@@ -103,10 +134,10 @@ def main():
         gone = not app.root.winfo_exists()
     except Exception:
         gone = True
-    check(6, alive and gone and any(k == "yesnocancel" for k, _ in asked),
+    check(7, alive and gone and any(k == "yesnocancel" for k, _ in asked),
           "quit with unsaved changes asks; Cancel keeps the window, Discard closes it")
 
-    print("window checklist: 6/6 passed")
+    print("window checklist: all items passed")
     shutil.rmtree(tmp, ignore_errors=True)
 
 

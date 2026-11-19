@@ -582,8 +582,11 @@ class App:
         self.root = tk.Tk() if master is None else tk.Toplevel(master)
         self.root.title(f"dirarttool {__version__}")
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self._drop_targets = {}     # hwnd -> the window procedure we replaced (Windows)
         self._build()
         self._refresh_title()
+        self.root.update_idletasks()        # realise the widgets so they have windows to register
+        self._install_dropfiles()
 
     # ---- building the widgets ------------------------------------------
 
@@ -676,7 +679,10 @@ class App:
         self.pal_canvas.bind("<Motion>", lambda e: self._hover(e, self.pal_canvas))
         self._draw_palette()
 
-        self.status = ttk.Label(root, text="open a .d64 to begin", anchor="w", padding=(6, 3))
+        hint = "open a .d64 to begin"
+        if sys.platform == "win32":
+            hint += ", or drop one on the window"
+        self.status = ttk.Label(root, text=hint, anchor="w", padding=(6, 3))
         self.status.pack(fill="x")
         self._refresh_apply()
 
@@ -792,6 +798,93 @@ class App:
             c.create_text(x_name + self._x(type_col) + 40, y + CELL, text=r.kind,
                           fill=GREY, anchor="w", font=("TkFixedFont",))
         c.configure(scrollregion=(0, 0, x_name + self._x(26), self._y(len(self.rows) + 1) + 4))
+        self._register_drop_targets()       # the row checkboxes are new windows
+
+    # ---- drag and drop (Windows) --------------------------------------------
+
+    def _install_dropfiles(self):
+        """Accept files dropped from Explorer, with nothing but the stdlib.
+
+        Tk has no drop support of its own. On Windows the shell will post
+        WM_DROPFILES to any window flagged with DragAcceptFiles, so every
+        window of ours is flagged and given a window procedure that turns
+        that one message into drop_paths() and passes everything else on.
+        Tk makes a real window per widget, so the children are registered
+        too, or a drop on the canvas would show the no-entry cursor.
+        Elsewhere this does nothing; Open and the command line remain.
+        """
+        if sys.platform != "win32":
+            return
+        import ctypes
+        from ctypes import wintypes
+        user32, shell32 = ctypes.windll.user32, ctypes.windll.shell32
+        WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                                     wintypes.WPARAM, wintypes.LPARAM)
+        set_long = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+        set_long.restype = ctypes.c_ssize_t
+        set_long.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        user32.CallWindowProcW.restype = ctypes.c_ssize_t
+        user32.CallWindowProcW.argtypes = [ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                                           wintypes.WPARAM, wintypes.LPARAM]
+        shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+        shell32.DragQueryFileW.restype = wintypes.UINT
+        shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR,
+                                           wintypes.UINT]
+        shell32.DragFinish.argtypes = [wintypes.HANDLE]
+        WM_DROPFILES, GWLP_WNDPROC = 0x0233, -4
+
+        def proc(hwnd, msg, wparam, lparam):
+            if msg == WM_DROPFILES:
+                paths = []
+                for i in range(shell32.DragQueryFileW(wparam, 0xFFFFFFFF, None, 0)):
+                    n = shell32.DragQueryFileW(wparam, i, None, 0) + 1
+                    buf = ctypes.create_unicode_buffer(n)
+                    shell32.DragQueryFileW(wparam, i, buf, n)
+                    paths.append(buf.value)
+                shell32.DragFinish(wparam)
+                self.root.after_idle(lambda p=paths: self.drop_paths(p))
+                return 0
+            return user32.CallWindowProcW(self._drop_targets[hwnd], hwnd, msg, wparam, lparam)
+
+        self._wndproc = WNDPROC(proc)       # kept on self: ctypes must not collect it
+        self._wndproc_addr = ctypes.cast(self._wndproc, ctypes.c_void_p).value
+
+        def register(hwnd):
+            if hwnd and hwnd not in self._drop_targets:
+                shell32.DragAcceptFiles(hwnd, True)
+                self._drop_targets[hwnd] = set_long(hwnd, GWLP_WNDPROC, self._wndproc_addr)
+
+        ENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        self._enum_children = ENUM(lambda hwnd, _l: (register(hwnd), True)[1])
+        user32.EnumChildWindows.argtypes = [wintypes.HWND, ENUM, wintypes.LPARAM]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        self._drop_root = user32.GetAncestor(self.root.winfo_id(), 2)
+        self._register_one = register
+        self._user32 = user32
+        self._register_drop_targets()
+        # Widgets inside a notebook tab get their window only when the tab is
+        # first shown, after this ran; whenever one of ours is mapped, look again.
+        for w in (self.root, self.notebook, self.dir_canvas, self.pal_canvas):
+            w.bind("<Map>", lambda e: self.root.after_idle(self._register_drop_targets), add="+")
+
+    def _register_drop_targets(self):
+        """Flag every window we own, including ones made since the last call."""
+        if not self._drop_targets and not hasattr(self, "_register_one"):
+            return
+        self._register_one(self._drop_root)
+        self._user32.EnumChildWindows(self._drop_root, self._enum_children, 0)
+
+    def drop_paths(self, paths):
+        """Open the first .d64 among dropped paths; say so when there is none."""
+        disks = [p for p in paths if p.lower().endswith(".d64")]
+        if not disks:
+            names = ", ".join(os.path.basename(p) for p in paths) or "nothing"
+            self._error(BadImage(f"drop a .d64 on the window (got {names})"))
+            return False
+        if not self._ask_discard():
+            return False
+        return self.open_path(disks[0])
 
     def _draw_picker(self, box_text, b):
         box, text = box_text
