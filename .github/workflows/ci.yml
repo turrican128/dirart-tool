@@ -12,12 +12,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.9", "3.12"]
-        exclude:
+        include:
           # 3.9 is the floor we promise; testing it on one OS is enough.
-          - os: windows-latest
+          # ubuntu-latest (26.04 since Nov 2026) ships no 3.9 build, so the
+          # floor runs on 22.04, the newest image that still has one.
+          - os: ubuntu-22.04
             python: "3.9"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
     steps:
       - uses: actions/checkout@v4
 
