@@ -103,5 +103,46 @@ def test_shell_drop_message_opens_the_disk(app, fixture):
     ctypes.memmove(p + 20, payload, len(payload))
     kernel32.GlobalUnlock(hglobal)
     user32.SendMessageW(app.dir_canvas.winfo_id(), 0x0233, hglobal, 0)   # WM_DROPFILES
+    import time
+    for _ in range(10):                      # the handler parks the paths; a Tk timer opens them
+        app.root.update()
+        time.sleep(0.03)
+    assert app.path == disk and len(app.rows) == 3
+
+
+def test_drop_posted_from_another_process(app, fixture):
+    """The crash case: a drop that arrives through Tk's own message dispatch.
+
+    An in-process SendMessage runs the handler with Python on the stack; a
+    real drop from Explorer does not. The first version called back into Tk
+    from the handler and died with a fatal GIL error on every real drop.
+    """
+    import subprocess
+    import sys
+    import time
+    if sys.platform != "win32":
+        pytest.skip("shell drop messages are a Windows thing")
+    disk = str(fixture("baracuda-dir-file.d64"))
     app.root.update()
+    sender = r'''
+import ctypes, sys
+from ctypes import wintypes
+k, u = ctypes.windll.kernel32, ctypes.windll.user32
+disk, hwnd = sys.argv[1], int(sys.argv[2])
+payload = (disk + "\0\0").encode("utf-16-le")
+hdr = (20).to_bytes(4, "little") + bytes(12) + (1).to_bytes(4, "little")
+k.GlobalAlloc.restype = wintypes.HGLOBAL; k.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+k.GlobalLock.restype = ctypes.c_void_p; k.GlobalLock.argtypes = [wintypes.HGLOBAL]
+k.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+u.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+h = k.GlobalAlloc(0x42, 20 + len(payload)); p = k.GlobalLock(h)
+ctypes.memmove(p, hdr, 20); ctypes.memmove(p + 20, payload, len(payload)); k.GlobalUnlock(h)
+sys.exit(0 if u.PostMessageW(hwnd, 0x0233, h, 0) else 1)
+'''
+    proc = subprocess.Popen([sys.executable, "-c", sender, disk, str(app.dir_canvas.winfo_id())])
+    deadline = time.time() + 5
+    while time.time() < deadline and app.path != disk:
+        app.root.update()                   # keep pumping: a posted drop needs a live loop
+        time.sleep(0.02)
+    assert proc.wait(timeout=5) == 0
     assert app.path == disk and len(app.rows) == 3

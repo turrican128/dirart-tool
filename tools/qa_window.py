@@ -116,7 +116,10 @@ def main():
         ctypes.memmove(p + 20, payload, len(payload))
         k.GlobalUnlock(h)
         u.SendMessageW(app.dir_canvas.winfo_id(), 0x0233, h, 0)      # WM_DROPFILES, as Explorer sends it
-        app.root.update()
+        import time
+        for _ in range(10):                  # the handler parks the paths; a Tk timer opens them
+            app.root.update()
+            time.sleep(0.03)
         check(6, app.path == fresh and len(app.rows) == 3,
               "a .d64 dropped on the directory canvas (shell WM_DROPFILES) opens")
         app.set_from(0xD6)

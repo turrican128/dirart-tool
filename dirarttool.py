@@ -583,6 +583,7 @@ class App:
         self.root.title(f"dirarttool {__version__}")
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
         self._drop_targets = {}     # hwnd -> the window procedure we replaced (Windows)
+        self._dropped = []          # path lists parked by the window procedure
         self._build()
         self._refresh_title()
         self.root.update_idletasks()        # realise the widgets so they have windows to register
@@ -834,6 +835,10 @@ class App:
         WM_DROPFILES, GWLP_WNDPROC = 0x0233, -4
 
         def proc(hwnd, msg, wparam, lparam):
+            # Runs inside Windows' message dispatch, which Tk is in the middle
+            # of. Touching Tk from here (even root.after) re-enters _tkinter
+            # while it has released the GIL and kills the process. So: read
+            # the paths, park them, return. _poll_drops picks them up.
             if msg == WM_DROPFILES:
                 paths = []
                 for i in range(shell32.DragQueryFileW(wparam, 0xFFFFFFFF, None, 0)):
@@ -842,16 +847,27 @@ class App:
                     shell32.DragQueryFileW(wparam, i, buf, n)
                     paths.append(buf.value)
                 shell32.DragFinish(wparam)
-                self.root.after_idle(lambda p=paths: self.drop_paths(p))
+                self._dropped.append(paths)
                 return 0
             return user32.CallWindowProcW(self._drop_targets[hwnd], hwnd, msg, wparam, lparam)
 
         self._wndproc = WNDPROC(proc)       # kept on self: ctypes must not collect it
         self._wndproc_addr = ctypes.cast(self._wndproc, ctypes.c_void_p).value
+        # Windows drops messages sent from a less privileged process to a more
+        # privileged one. Explorer is never elevated; if this tool is (started
+        # from an admin shell), a drop would silently show the no-entry
+        # cursor. Let the three drop-related messages through regardless.
+        MSGFLT_ALLOW = 1
+        allow = getattr(user32, "ChangeWindowMessageFilterEx", None)
+        if allow is not None:
+            allow.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p]
 
         def register(hwnd):
             if hwnd and hwnd not in self._drop_targets:
                 shell32.DragAcceptFiles(hwnd, True)
+                if allow is not None:
+                    for m in (WM_DROPFILES, 0x0049, 0x004A):    # + WM_COPYGLOBALDATA, WM_COPYDATA
+                        allow(hwnd, m, MSGFLT_ALLOW, None)
                 self._drop_targets[hwnd] = set_long(hwnd, GWLP_WNDPROC, self._wndproc_addr)
 
         ENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -867,6 +883,21 @@ class App:
         # first shown, after this ran; whenever one of ours is mapped, look again.
         for w in (self.root, self.notebook, self.dir_canvas, self.pal_canvas):
             w.bind("<Map>", lambda e: self.root.after_idle(self._register_drop_targets), add="+")
+        self._poll_drops()
+
+    DROP_POLL_MS = 100
+
+    def _poll_drops(self):
+        """Open whatever the window procedure parked, from Tk's own timer."""
+        import tkinter
+        try:
+            if not self.root.winfo_exists():
+                return
+            while self._dropped:
+                self.drop_paths(self._dropped.pop(0))
+            self.root.after(self.DROP_POLL_MS, self._poll_drops)
+        except tkinter.TclError:
+            return                      # the window is gone; stop polling
 
     def _register_drop_targets(self):
         """Flag every window we own, including ones made since the last call."""
