@@ -70,7 +70,6 @@ def test_bad_arguments(fixture, run_tool, tmp_path):
     assert run_tool(p, "--replace", "D6=D6", expect_ok=False).returncode == 2
     assert run_tool(p, "--replace", "ZZ=D1", expect_ok=False).returncode == 2
     assert run_tool(p, "--replace", "D6=D1", "--replace", "D6=D7", expect_ok=False).returncode == 2
-    assert run_tool(p, expect_ok=False).returncode == 2            # GUI stub, until Task 5
     assert run_tool(tmp_path / "none.d64", "--replace", "D6=D1", expect_ok=False).returncode == 3
     r = run_tool(p, "--replace", "D6=D1", "-o", tmp_path / "nodir" / "o.d64", expect_ok=False)
     assert r.returncode == 4
