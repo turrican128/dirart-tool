@@ -313,3 +313,158 @@ def write_atomically(out, data):
         except OSError:
             pass
         raise
+
+
+# --------------------------------------------------------------------------
+# command line
+# --------------------------------------------------------------------------
+
+def parse_char(text):
+    """One side of a --replace: two hex digits, or one printable character.
+
+    Hex wins when it parses ("10" is $10, not the two characters 1 and 0),
+    because hex is how dir artists talk about PETSCII. A lone letter is
+    uppercased, the C64's default charset having no lowercase.
+    """
+    if len(text) == 2:
+        try:
+            return int(text, 16)
+        except ValueError:
+            pass
+    if len(text) == 1 and 32 <= ord(text) < 127:
+        return ord(text.upper())
+    raise BadArgs(f"'{text}' is not a character: give two hex digits like D6 "
+                  f"or one printable character like X")
+
+
+def parse_replace(specs):
+    """--replace FROM=TO pairs into one {from: to} mapping."""
+    mapping = {}
+    for spec in specs or ():
+        cut = spec.find("=", 1)             # "==-" replaces '=' itself
+        if cut == -1 or cut == len(spec) - 1:
+            raise BadArgs(f"--replace wants FROM=TO, got '{spec}'")
+        src, dst = parse_char(spec[:cut]), parse_char(spec[cut + 1:])
+        if src == dst:
+            raise BadArgs(f"--replace {spec}: FROM and TO are the same character")
+        if src in mapping:
+            raise BadArgs(f"--replace {spec}: ${src:02X} is already being replaced")
+        mapping[src] = dst
+    if not mapping:
+        raise BadArgs("nothing to do: give at least one --replace FROM=TO")
+    return mapping
+
+
+def select_rows(rows, wanted, all_rows):
+    """Which rows a run may touch, under the consent rule.
+
+    Default is every art row. `wanted` narrows that to listing indexes. A real
+    file is only ever included with --all-rows: naming one in --rows without
+    it is refused, so a build script cannot rename a file by accident.
+    """
+    if wanted is not None:
+        bad = [i for i in wanted if i < 0 or i >= len(rows)]
+        if bad:
+            raise BadArgs(f"no such row {bad[0]}: this disk has rows 0..{len(rows) - 1}")
+        chosen = sorted(set(wanted))
+        if not all_rows:
+            files = [rows[i] for i in chosen if rows[i].kind == "file"]
+            if files:
+                raise BadArgs(
+                    f"row {files[0].index} is the real file {files[0].load_name}; "
+                    f"add --all-rows if you really want to change its name")
+        return chosen
+    return [r.index for r in rows if all_rows or r.kind == "art"]
+
+
+def print_listing(data, rows, out=None):
+    """What a LIST would show, with the row index the tool uses on the left."""
+    out = out or sys.stdout
+    name, disk_id, dos = header(data)
+    fake = bytes(5)
+    print(file=out)
+    print(f'     {0:5} "{display_name(fake + name)}" '
+          f'{display_name(fake + disk_id + bytes(14))[:2]} '
+          f'{display_name(fake + dos + bytes(14))[:2]}', file=out)
+    for r in rows:
+        print(f'{r.index:3}  {r.blocks:5} "{display_name(fake + r.name)}" {r.type_text}',
+              file=out)
+    print(file=out)
+
+
+def _rows_arg(text):
+    try:
+        return [int(x) for x in text.split(",") if x.strip()]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--rows wants numbers like 1,2,3, got '{text}'")
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="dirarttool",
+        description="Replace one PETSCII character with another across the "
+                    "directory art of a .d64. With no arguments, opens the window.")
+    p.add_argument("d64", nargs="?", help="the disk image (rewritten in place unless -o)")
+    p.add_argument("--replace", metavar="FROM=TO", action="append",
+                   help="character to replace and what with: two hex digits (D6) or "
+                        "one printable character (X); repeatable")
+    p.add_argument("--rows", type=_rows_arg, metavar="N,N,...",
+                   help="only these rows (listing index, 0-based); default: every art row")
+    p.add_argument("--all-rows", action="store_true",
+                   help="allow real files too (changes their LOAD names)")
+    p.add_argument("-o", "--out", metavar="OUT.D64", help="write here instead of in place")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the resulting listing, write nothing")
+    p.add_argument("-q", "--quiet", action="store_true", help="no progress lines")
+    p.add_argument("--version", action="version", version=f"dirarttool {__version__}")
+    return p
+
+
+def run_gui(path):
+    """The window. Built in Task 5; until then the CLI says so."""
+    raise BadArgs("GUI not built yet")
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        return run_gui(None)
+    if len(argv) == 1 and not argv[0].startswith("-"):
+        return run_gui(argv[0])
+
+    args = build_parser().parse_args(argv)
+    log = (lambda *a, **k: None) if args.quiet else print
+    if not args.d64:
+        raise BadArgs("which disk? give a .d64")
+
+    mapping = parse_replace(args.replace)
+    data = load(args.d64)
+    rows = directory(data)
+    chosen = select_rows(rows, args.rows, args.all_rows)
+    result, changed = replace(data, mapping, chosen)
+
+    if args.dry_run:
+        print_listing(result, directory(result))
+        log(f"[*] {changed} cells changed")
+        log("[*] dry run -- nothing written")
+        return 0
+
+    log(f"[*] {changed} cells changed")
+    out = args.out or args.d64
+    save(out, result)
+    log(f"[*] DONE -> {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except DirArtError as exc:
+        # stdout is block-buffered when piped and stderr is not, so without
+        # this flush the error jumps ahead of the progress lines that explain
+        # what the tool was doing when it hit the problem.
+        sys.stdout.flush()
+        print(f"!! {exc}", file=sys.stderr)
+        sys.exit(exc.code)
+    except KeyboardInterrupt:
+        sys.exit(130)
