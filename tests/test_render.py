@@ -39,3 +39,17 @@ def test_cells_carry_reverse_flag():
     cells = dt.listing_cells(b"\x12AB" + b"\x20" * 13)
     assert cells[0] == (0x12, True, False)
     assert cells[1] == (0x41, False, False)
+
+
+def test_listing_columns_follow_the_drive():
+    """The closing quote replaces the first $A0 in place; a full name pushes it out."""
+    full = b"\xd1\xd1  BARACUDA  \xd1\xd1"
+    cells, quote_col, type_col = dt.listing_columns(full)
+    assert [c[0] for c in cells] == list(range(1, 17))          # cells at columns 1..16
+    assert quote_col == 17 and type_col == 19
+    padded = b"HELLO" + b"\xa0" * 11
+    cells, quote_col, type_col = dt.listing_columns(padded)
+    assert [c[0] for c in cells] == list(range(1, 17))          # no column is inserted
+    assert quote_col == 6 and type_col == 18                     # the quote sits in the $A0 cell
+    assert cells[5][1] == 0xA0 and cells[5][2] == 0x20           # (col, raw byte, shown byte, rev)
+    assert cells[0][1] == ord("H") and cells[0][3] is False

@@ -85,3 +85,19 @@ def test_single_character_form(fixture, run_tool):
 
 def test_version(run_tool):
     assert "1.0.0" in run_tool("--version", expect_ok=True).stdout
+
+
+def test_parse_char_is_strict():
+    import pytest
+    import dirarttool as dt
+    assert dt.parse_char("d6") == 0xD6 and dt.parse_char("x") == ord("X")
+    for bad in ("-1", "+F", " 6", "6 ", "", "ABC"):
+        with pytest.raises(dt.BadArgs):
+            dt.parse_char(bad)
+
+
+def test_negative_row_is_refused(fixture, run_tool):
+    p = fixture("baracuda-dir-file.d64")
+    before = p.read_bytes()
+    r = run_tool(p, "--replace", "D6=D1", "--rows", "1,-3", expect_ok=False)
+    assert r.returncode == 2 and "0..2" in r.stderr and p.read_bytes() == before

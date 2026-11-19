@@ -413,6 +413,28 @@ def listing_cells(name):
     return cells
 
 
+def listing_columns(name):
+    """Where each piece of a directory line sits, in character columns.
+
+    Column 0 is the opening quote. The 16 name bytes always occupy columns
+    1..16: the drive prints the closing quote *in place of* the first $A0,
+    so a padded name never shifts anything. A full 16-character name gets
+    its quote appended at column 17 and pushes the file type one column
+    right, exactly as a real LIST does.
+
+    Returns (cells, quote_col, type_col) with one cell per name byte:
+    (column, raw byte, shown byte, reversed). The raw byte is what a click
+    picks ($A0 stays $A0); the shown byte is what gets drawn.
+    """
+    q = quote_column(name)
+    cells = []
+    for i, (shown, rev, _after) in enumerate(listing_cells(name)):
+        cells.append((1 + i, bytes(name)[i], shown, rev))
+    if q < 16:
+        return cells, 1 + q, 18
+    return cells, 17, 19
+
+
 # --------------------------------------------------------------------------
 # command line
 # --------------------------------------------------------------------------
@@ -424,11 +446,8 @@ def parse_char(text):
     because hex is how dir artists talk about PETSCII. A lone letter is
     uppercased, the C64's default charset having no lowercase.
     """
-    if len(text) == 2:
-        try:
-            return int(text, 16)
-        except ValueError:
-            pass
+    if len(text) == 2 and all(c in "0123456789abcdefABCDEF" for c in text):
+        return int(text, 16)
     if len(text) == 1 and 32 <= ord(text) < 127:
         return ord(text.upper())
     raise BadArgs(f"'{text}' is not a character: give two hex digits like D6 "
@@ -550,7 +569,8 @@ class App:
         self.undo_stack = []
         self.src = None             # From, a PETSCII byte
         self.dst = None             # To
-        self.row_vars = []          # one BooleanVar per row
+        self.row_vars = []          # one BooleanVar per row, made in _reset_ticks
+        self.row_checks = []        # and its Checkbutton, kept across redraws
         self.warned_about_files = False
         self._glyphs = {}           # (screen code, reversed) -> PhotoImage
 
@@ -713,12 +733,21 @@ class App:
                            image=self._glyph_image(code, rev), anchor="nw",
                            tags=("pal", f"b{b}"))
 
+    def _reset_ticks(self):
+        """One checkbox per row, made when a disk is opened and kept across
+        redraws so a user's ticks survive Apply and Undo (and nothing leaks)."""
+        for cb in self.row_checks:
+            cb.destroy()
+        self.row_vars, self.row_checks = [], []
+        for r in self.rows:
+            var = self.tk.BooleanVar(value=(r.kind == "art"))
+            var.trace_add("write", lambda *a: self._refresh_apply())
+            self.row_vars.append(var)
+            self.row_checks.append(self.ttk.Checkbutton(self.dir_canvas, variable=var))
+
     def _redraw_directory(self):
         c = self.dir_canvas
         c.delete("all")
-        for var in self.row_vars:
-            del var
-        self.row_vars = []
         if self.image is None:
             return
         name, disk_id, dos = header(self.image)
@@ -735,29 +764,27 @@ class App:
         for i, b in enumerate(disk_id + b" " + dos):
             self._put_petscii(c, 0x20 if b == PAD_SHIFTED else b, 19 + i, 0, ("hdr",), x0=x_name)
         # one line per row
-        for r in self.rows:
+        for r, cb in zip(self.rows, self.row_checks):
             line = r.index + 1
             y = self._y(line)
-            var = self.tk.BooleanVar(value=(r.kind == "art"))
-            var.trace_add("write", lambda *a: self._refresh_apply())
-            self.row_vars.append(var)
-            cb = self.ttk.Checkbutton(c, variable=var, style="Dir.TCheckbutton")
             c.create_window(x_text, y + CELL * self.scale // 2, window=cb, anchor="w")
             c.create_text(x_text + 40, y + CELL, text=str(r.index), fill=GREY, anchor="e",
                           font=("TkFixedFont",))
             c.create_text(x_text + 90, y + CELL, text=str(r.blocks), fill=LIGHT_BLUE,
                           anchor="e", font=("TkFixedFont",))
-            q = quote_column(r.name)
+            cells, quote_col, type_col = listing_columns(r.name)
             self._put_petscii(c, quote, 0, line, ("q",), x0=x_name)
-            for i, (b, rev, after) in enumerate(listing_cells(r.name)):
-                col = 1 + i + (1 if after else 0)      # the closing quote takes a column
-                self._put_petscii(c, b, col, line, ("cell", f"r{r.index}", f"i{i}", f"b{b}"),
+            for i, (col, raw, shown, rev) in enumerate(cells):
+                # The cell that holds the first $A0 is drawn as the closing quote,
+                # as the drive prints it; it stays a click target for $A0.
+                drawn = quote if col == quote_col else shown
+                self._put_petscii(c, drawn, col, line, ("cell", f"r{r.index}", f"i{i}", f"b{raw}"),
                                   reversed_=rev, x0=x_name)
-            self._put_petscii(c, quote, 1 + q, line, ("q",), x0=x_name)
-            tail = 1 + 16 + 1 + (1 if q < 16 else 0)
-            c.create_text(x_name + self._x(tail) + 8, y + CELL, text=r.type_text,
+            if quote_col == 17:
+                self._put_petscii(c, quote, 17, line, ("q",), x0=x_name)
+            c.create_text(x_name + self._x(type_col), y + CELL, text=r.type_text,
                           fill=LIGHT_BLUE, anchor="w", font=("TkFixedFont",))
-            c.create_text(x_name + self._x(tail) + 48, y + CELL, text=r.kind,
+            c.create_text(x_name + self._x(type_col) + 40, y + CELL, text=r.kind,
                           fill=GREY, anchor="w", font=("TkFixedFont",))
         c.configure(scrollregion=(0, 0, x_name + self._x(26), self._y(len(self.rows) + 1) + 4))
 
@@ -868,6 +895,7 @@ class App:
         self.path, self.image, self.on_disk, self.rows = path, image, image, rows
         self.undo_stack = []
         self.last_label.configure(text="")
+        self._reset_ticks()
         self._redraw_directory()
         self.status.configure(text=f"{os.path.basename(path)}: {len(rows)} rows")
         self._refresh_apply()
