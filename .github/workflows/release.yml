@@ -89,6 +89,16 @@ jobs:
           "$BIN" smoke-in.d64 --replace D6=D1 -o smoke-out.d64
           cmp smoke-in.d64 tests/fixtures/baracuda-dir-file.d64     # -o left the input alone
           test -s smoke-out.d64
+          # The Mask imports `random` only when it runs, so only a real run
+          # proves the bundle carries it. Same seed, same mix as the script.
+          cp tests/fixtures/baracuda-mask-disk.d64 mask-in.d64
+          "$BIN" mask-in.d64 --mask 1 --mask-from 1-7 --seed 7 -o mask-bin.d64
+          python dirarttool.py mask-in.d64 --mask 1 --mask-from 1-7 --seed 7 -o mask-py.d64
+          cmp mask-bin.d64 mask-py.d64
+          cmp mask-in.d64 tests/fixtures/baracuda-mask-disk.d64   # -o left the input alone
+          "$BIN" smoke-in.d64 --header-from mask-in.d64 --id-from mask-in.d64 -o head-bin.d64
+          python dirarttool.py smoke-in.d64 --header-from mask-in.d64 --id-from mask-in.d64 -o head-py.d64
+          cmp head-bin.d64 head-py.d64
           set +e
           "$BIN" smoke-bin.d64 --replace D6=D1 --rows 7
           [ $? -eq 2 ] || { echo "::error::a row that does not exist should exit 2"; exit 1; }
@@ -122,16 +132,18 @@ jobs:
           chmod +x "$DIR/dirarttool"
           cp dirarttool.py README.md CHANGELOG.md LICENSE "$DIR/"
           # The README embeds this; without it the image is dead offline.
-          cp docs/window.png "$DIR/docs/"
+          cp docs/window.png docs/window-mask.png "$DIR/docs/"
           # Baracuda's test disk: the example the README walks through.
           cp tests/fixtures/baracuda-dir-file.d64 "$DIR/example-baracuda.d64"
+          # His second disk: a stamp full of 1s, the example for the Mask.
+          cp tests/fixtures/baracuda-mask-disk.d64 "$DIR/example-mask.d64"
           zip -r -q "${DIR}.zip" "$DIR"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "ZIP=${DIR}.zip"   >> "$GITHUB_ENV"
           unzip -l "${DIR}.zip"
           # A file the zip is supposed to carry going missing must fail the build.
           required="dirarttool dirarttool.exe dirarttool.py README.md CHANGELOG.md LICENSE"
-          required="$required docs/window.png example-baracuda.d64"
+          required="$required docs/window.png docs/window-mask.png example-baracuda.d64 example-mask.d64"
           listing=$(unzip -Z1 "${DIR}.zip")
           for f in $required; do
             echo "$listing" | grep -qxF "${DIR}/${f}" || { echo "::error::missing from the zip: $f"; exit 1; }

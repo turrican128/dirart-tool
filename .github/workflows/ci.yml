@@ -46,4 +46,6 @@ jobs:
           python dirarttool.py --version
           python dirarttool.py tests/fixtures/baracuda-dir-file.d64 \
             --replace D6=D1 --replace D7=D1 --dry-run
+          python dirarttool.py tests/fixtures/baracuda-mask-disk.d64 \
+            --mask 1 --mask-from 1-7 --seed 7 --dry-run
           python -c "import tkinter; print('tkinter', tkinter.TkVersion)"

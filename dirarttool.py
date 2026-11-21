@@ -3,18 +3,23 @@
 
 Directory art is a picture drawn with the 16-character names of directory
 entries. Artists edit it one cell at a time in DirMaster; this tool changes
-one character into another across every row at once (the Replacer), from a
-window or from the command line.
+one character into another across every row at once (the Replacer), fills a
+placeholder character with signs taken from other lines (the Mask), and
+carries a disk's header and ID over to another disk, from a window or from
+the command line.
 
     dirarttool                              open the window
     dirarttool disk.d64                     open the window with this disk
     dirarttool disk.d64 --replace D6=D1     cross -> filled circle, art rows, in place
     dirarttool disk.d64 --replace 0=- --rows 1,2,3 -o out.d64 --dry-run
+    dirarttool disk.d64 --mask 1 --mask-from 1-7      fill every 1 with signs of lines 1-7
+    dirarttool disk.d64 --header-from other.d64       take the header of another disk
 
-Only the 16 name bytes of the rows you pick are ever written. File types,
-block counts, sector links, the BAM and every data sector stay exactly as
-they were, and the disk is written atomically so a crash cannot leave half
-an image behind.
+Only the 16 name bytes of the rows you pick are ever written, plus the 16
+header and 5 ID bytes when you ask for those. File types, block counts,
+sector links, the block map and every data sector stay exactly as they
+were, and the disk is written atomically so a crash cannot leave half an
+image behind.
 
 The 1541 geometry, the directory reader with its refusal rules and the
 atomic writer are txt2dirart 1.0.2's, copied with their comments.
@@ -25,7 +30,7 @@ import argparse
 import os
 import sys
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 DIR_TRACK = 18
 ENTRY_SIZE = 32
@@ -261,6 +266,118 @@ def replace(data, mapping, rows):
     return bytes(out), changed
 
 
+MASK_TRIES = 50     # re-rolls of one line before two equal lines are accepted
+
+
+def mask(data, placeholder, rows, sources, seed=None):
+    """Fill the placeholder character with signs taken from other lines.
+
+    rows     listing indexes of the lines to fill (the stamp)
+    sources  listing indexes of the lines to take signs from. There is no
+             default on purpose: a directory holds separators, text and
+             test rows next to the art, and a mix of all of them is not
+             what an artist is after. The artist says which lines look right.
+    seed     fixes the mix; None shuffles differently every run
+
+    Each placeholder cell takes the sign in the same column of a randomly
+    picked source line, so a column keeps the character of the art above it.
+    A line that comes out equal to one already filled is mixed again (up to
+    MASK_TRIES times), so every line looks different whenever the sources
+    allow it. Source cells holding the placeholder, the $A0 pad or $00 are
+    never taken. A column with no candidate is left unchanged and counted.
+
+    Returns (new image, cells filled, cells left). Like replace(), only the
+    16 name bytes of the target rows can differ between data and the result.
+    """
+    import random                     # lazy: the release build's module list is tuned
+
+    listing = directory(data)
+    wanted = sorted(set(rows))
+    if wanted and (wanted[0] < 0 or wanted[-1] >= len(listing)):
+        bad = [i for i in wanted if i < 0 or i >= len(listing)]
+        raise BadArgs(f"no such row {bad[0]}: this disk has rows 0..{len(listing) - 1}")
+    picked = sorted(set(sources or ()))
+    if not picked:
+        raise BadArgs("the Mask needs source lines: say which lines to take the signs from")
+    if picked[0] < 0 or picked[-1] >= len(listing):
+        bad = [i for i in picked if i < 0 or i >= len(listing)]
+        raise BadArgs(f"no such source row {bad[0]}: this disk has rows "
+                      f"0..{len(listing) - 1}")
+
+    columns = [[] for _ in range(NAME_LEN)]
+    for i in picked:
+        for col in range(NAME_LEN):
+            b = listing[i].name[col]
+            if b not in (placeholder, PAD_SHIFTED, 0x00):
+                columns[col].append(b)
+
+    rng = random.Random(seed)
+    out = bytearray(data)
+    filled = left = 0
+    seen = set()
+    for i in wanted:
+        start = listing[i].entry_offset + 5
+        name = bytes(out[start:start + NAME_LEN])
+        holes = [col for col in range(NAME_LEN) if name[col] == placeholder]
+        fillable = [col for col in holes if columns[col]]
+        left += len(holes) - len(fillable)
+        if not fillable:
+            continue
+        for _ in range(MASK_TRIES):
+            new = bytearray(name)
+            for col in fillable:
+                new[col] = rng.choice(columns[col])
+            if bytes(new) not in seen:
+                break
+        seen.add(bytes(new))
+        out[start:start + NAME_LEN] = new
+        filled += len(fillable)
+    return bytes(out), filled, left
+
+
+# The header line of a listing: 16 name bytes, then the five characters the
+# drive prints after the closing quote -- two ID bytes, a pad and the two DOS
+# type bytes. Dir artists draw in all five, so "the ID" here is all five.
+HEADER_AT, HEADER_LEN = 0x90, 16
+ID_AT, ID_LEN = 0xA2, 5
+
+
+def read_header(data):
+    """The 16 header (disk name) bytes."""
+    track_count(data)
+    at = offset(DIR_TRACK, 0) + HEADER_AT
+    return bytes(data[at:at + HEADER_LEN])
+
+
+def read_id(data):
+    """The 5 bytes a listing shows after the header: ID, pad, DOS type."""
+    track_count(data)
+    at = offset(DIR_TRACK, 0) + ID_AT
+    return bytes(data[at:at + ID_LEN])
+
+
+def write_header(data, name=None, disk_id=None):
+    """Put a header and/or an ID on a disk; None leaves that part alone.
+
+    Returns (new image, bytes changed). Only the 16 header bytes and the 5 ID
+    bytes in the BAM sector can differ between `data` and the result; the
+    block map around them is not touched.
+    """
+    track_count(data)
+    bam = offset(DIR_TRACK, 0)
+    out = bytearray(data)
+    if name is not None:
+        if len(name) != HEADER_LEN:
+            raise BadArgs(f"a header is {HEADER_LEN} bytes, got {len(name)}")
+        out[bam + HEADER_AT:bam + HEADER_AT + HEADER_LEN] = name
+    if disk_id is not None:
+        if len(disk_id) != ID_LEN:
+            raise BadArgs(f"an ID is {ID_LEN} bytes, got {len(disk_id)}")
+        out[bam + ID_AT:bam + ID_AT + ID_LEN] = disk_id
+    changed = sum(1 for x, y in zip(data, out) if x != y)
+    return bytes(out), changed
+
+
 def save(path, data):
     """Write the image atomically; any failure leaves the old file as it was."""
     try:
@@ -308,6 +425,13 @@ def write_atomically(out, data):
         os.chmod(tmp, mode)
         os.replace(tmp, out)
     except BaseException:
+        try:
+            # A read-only target hands its mode to the temporary file, and
+            # Windows will not delete a read-only file: make it ours again
+            # first, or every refused save leaves a full disk image behind.
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
         try:
             os.unlink(tmp)
         except OSError:
@@ -509,11 +633,48 @@ def print_listing(data, rows, out=None):
     print(file=out)
 
 
+MAX_ROWS = 144      # 18 directory sectors of 8 entries: no disk has more
+
+
+def parse_rows(text):
+    """'1,2,5-7' -> [1, 2, 5, 6, 7]. Raises ValueError on anything else."""
+    rows = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        lo, dash, hi = part.partition("-")
+        if dash:
+            first, last = int(lo), int(hi)
+            if last < first or last - first > MAX_ROWS:
+                raise ValueError(part)
+            rows.extend(range(first, last + 1))
+        else:
+            rows.append(int(part))
+    if not rows:
+        raise ValueError("no rows")
+    return rows
+
+
+def format_rows(rows):
+    """[1, 2, 3, 7] -> '1-3,7', the shortest way to write a row list."""
+    rows = sorted(set(rows))
+    parts, i = [], 0
+    while i < len(rows):
+        j = i
+        while j + 1 < len(rows) and rows[j + 1] == rows[j] + 1:
+            j += 1
+        parts.append(str(rows[i]) if i == j else f"{rows[i]}-{rows[j]}")
+        i = j + 1
+    return ",".join(parts)
+
+
 def _rows_arg(text):
     try:
-        return [int(x) for x in text.split(",") if x.strip()]
+        return parse_rows(text)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"--rows wants numbers like 1,2,3, got '{text}'")
+        raise argparse.ArgumentTypeError(
+            f"wants row numbers like 1,2,3 or 1-7, got '{text}'")
 
 
 def build_parser():
@@ -525,8 +686,22 @@ def build_parser():
     p.add_argument("--replace", metavar="FROM=TO", action="append",
                    help="character to replace and what with: two hex digits (D6) or "
                         "one printable character (X); repeatable")
-    p.add_argument("--rows", type=_rows_arg, metavar="N,N,...",
-                   help="only these rows (listing index, 0-based); default: every art row")
+    p.add_argument("--mask", metavar="CHAR",
+                   help="the Mask: fill every CHAR in the chosen rows with a sign "
+                        "taken from the same column of the --mask-from lines")
+    p.add_argument("--mask-from", type=_rows_arg, metavar="N-N,...",
+                   help="the lines the Mask takes its signs from, like 1-7 "
+                        "(needed with --mask)")
+    p.add_argument("--seed", type=int, metavar="N",
+                   help="fix the Mask's mix, so a run can be repeated exactly")
+    p.add_argument("--header-from", metavar="OTHER.D64",
+                   help="put the header (disk name) of OTHER.D64 on this disk")
+    p.add_argument("--id-from", metavar="OTHER.D64",
+                   help="put the ID of OTHER.D64 (the 5 characters after the "
+                        "header) on this disk")
+    p.add_argument("--rows", type=_rows_arg, metavar="N-N,...",
+                   help="only these rows (listing index, 0-based, like 1,2,5-7); "
+                        "default: every art row")
     p.add_argument("--all-rows", action="store_true",
                    help="allow real files too (changes their LOAD names)")
     p.add_argument("-o", "--out", metavar="OUT.D64", help="write here instead of in place")
@@ -549,12 +724,14 @@ CREDITS = "code DR.J/Delysid, idea and test disk Baracuda/Blazon"
 
 
 class App:
-    """The Replacer window. Holds a tk root rather than subclassing it, so the
-    module imports without tkinter and the CLI never pays for Tk.
+    """The window: the Replacer, the Mask and the header buffer. Holds a tk
+    root rather than subclassing it, so the module imports without tkinter
+    and the CLI never pays for Tk.
 
     Every button ends in an engine call: open_path -> load/directory,
-    apply -> replace, save/save_as -> save. The methods are public so a
-    script can drive the window the way a person would.
+    apply -> replace, apply_mask -> mask, paste_header -> write_header,
+    save/save_as -> save. The methods are public so a script can drive the
+    window the way a person would.
     """
 
     def __init__(self, scale=2, master=None):
@@ -574,6 +751,10 @@ class App:
         self.undo_stack = []
         self.src = None             # From, a PETSCII byte
         self.dst = None             # To
+        self.mask_char = None       # the Mask's placeholder byte
+        self._mask_preview = None   # the image the last Mask made, for "mix again"
+        self.clip_header = None     # header buffer: 16 bytes, survives opening disks
+        self.clip_id = None         # ID buffer: 5 bytes
         self.row_vars = []          # one BooleanVar per row, made in _reset_ticks
         self.row_checks = []        # and its Checkbutton, kept across redraws
         self.warned_about_files = False
@@ -607,6 +788,22 @@ class App:
         editmenu = tk.Menu(menubar, tearoff=0)
         editmenu.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
         menubar.add_cascade(label="Edit", menu=editmenu)
+        headmenu = tk.Menu(menubar, tearoff=0)
+        for label, key, command in (
+                ("Copy header", "F1", self.copy_header),
+                ("Write header", "F3", self.paste_header),
+                (None, None, None),
+                ("Copy ID", "F5", self.copy_id),
+                ("Write ID", "F7", self.paste_id),
+                (None, None, None),
+                ("Copy header + ID", "F2", self.copy_both),
+                ("Write header + ID", "F4", self.paste_both)):
+            if label is None:
+                headmenu.add_separator()
+                continue
+            headmenu.add_command(label=label, accelerator=key, command=command)
+            root.bind(f"<{key}>", lambda e, c=command: c())
+        menubar.add_cascade(label="Header", menu=headmenu)
         helpmenu = tk.Menu(menubar, tearoff=0)
         helpmenu.add_command(label="About", command=self.about)
         menubar.add_cascade(label="Help", menu=helpmenu)
@@ -627,30 +824,18 @@ class App:
         self.file_label = ttk.Label(bar, text="no disk open", foreground=GREY)
         self.file_label.pack(side="right")
 
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=6)
+        work = ttk.Frame(root)
+        work.pack(fill="both", expand=True, padx=6)
+        self.notebook = ttk.Notebook(work)
+        self.notebook.pack(side="right", fill="y", padx=(6, 0))
         replace_tab = ttk.Frame(self.notebook, padding=4)
         mask_tab = ttk.Frame(self.notebook, padding=4)
         self.notebook.add(replace_tab, text="Replace")
-        self.notebook.add(mask_tab, text="Mask", state="disabled")
-        ttk.Label(mask_tab, text="coming in v2").pack()
-
-        # directory pane: a canvas that scrolls if the directory is long
-        dir_frame = ttk.LabelFrame(replace_tab, text="Directory", padding=4)
-        dir_frame.pack(side="left", fill="both", expand=True)
-        self.dir_canvas = tk.Canvas(dir_frame, bg=BLUE, highlightthickness=0,
-                                    width=self._x(22) + 120, height=self._y(12))
-        vbar = ttk.Scrollbar(dir_frame, orient="vertical", command=self.dir_canvas.yview)
-        self.dir_canvas.configure(yscrollcommand=vbar.set)
-        self.dir_canvas.pack(side="left", fill="both", expand=True)
-        vbar.pack(side="right", fill="y")
-        self.dir_canvas.bind("<Button-1>", lambda e: self._pick(e, self.dir_canvas, "from"))
-        self.dir_canvas.bind("<Button-3>", lambda e: self._pick(e, self.dir_canvas, "to"))
-        self.dir_canvas.bind("<Motion>", lambda e: self._hover(e, self.dir_canvas))
+        self.notebook.add(mask_tab, text="Mask")
 
         # replace panel
         panel = ttk.LabelFrame(replace_tab, text="Replace", padding=8)
-        panel.pack(side="left", fill="y", padx=(6, 0))
+        panel.pack(side="left", fill="y")
         self.from_box = self._picker(panel, "From", 0)
         self.to_box = self._picker(panel, "To", 1)
         self.scope = tk.StringVar(value="ticked")
@@ -667,9 +852,49 @@ class App:
                   foreground=GREY, justify="left").grid(row=6, column=0, columnspan=2,
                                                         sticky="w", pady=(16, 0))
 
+        # mask panel
+        mpanel = ttk.LabelFrame(mask_tab, text="Mask", padding=8)
+        mpanel.pack(side="left", fill="y")
+        self.mask_box = self._picker(mpanel, "Fill", 0)
+        ttk.Label(mpanel, text="Take from").grid(row=1, column=0, sticky="w", pady=2)
+        self.mask_sources = tk.StringVar(value="")
+        self.mask_sources.trace_add("write", lambda *a: self._sources_changed())
+        ttk.Entry(mpanel, textvariable=self.mask_sources, width=14).grid(
+            row=1, column=1, sticky="w", pady=2)
+        ttk.Label(mpanel, text="Mix no.").grid(row=2, column=0, sticky="w", pady=2)
+        self.mask_seed = tk.StringVar(value="1")
+        ttk.Entry(mpanel, textvariable=self.mask_seed, width=8).grid(
+            row=2, column=1, sticky="w", pady=2)
+        self.mask_btn = ttk.Button(mpanel, text="Mix and fill", command=self.apply_mask)
+        self.mask_btn.grid(row=3, column=0, columnspan=2, pady=(14, 4), sticky="ew")
+        self.mask_label = ttk.Label(mpanel, text="", foreground=GREY)
+        self.mask_label.grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Label(mpanel, text="left click a sign = the sign to fill\n"
+                               "right click a line = take signs\n"
+                               "from it (or type lines: 1-7)\n\n"
+                               "The ticked lines are filled. Press\n"
+                               "the button again for another mix.",
+                  foreground=GREY, justify="left").grid(row=5, column=0, columnspan=2,
+                                                        sticky="w", pady=(16, 0))
+
+        # directory pane, shared by both tabs: a canvas that scrolls if the
+        # directory is long
+        dir_frame = ttk.LabelFrame(work, text="Directory", padding=4)
+        dir_frame.pack(side="left", fill="both", expand=True)
+        self.dir_canvas = tk.Canvas(dir_frame, bg=BLUE, highlightthickness=0,
+                                    width=self._x(29) + 120, height=self._y(12))
+        vbar = ttk.Scrollbar(dir_frame, orient="vertical", command=self.dir_canvas.yview)
+        self.dir_canvas.configure(yscrollcommand=vbar.set)
+        self.dir_canvas.pack(side="left", fill="both", expand=True)
+        vbar.pack(side="right", fill="y")
+        self.dir_canvas.bind("<Button-1>", lambda e: self._pick(e, self.dir_canvas, "from"))
+        self.dir_canvas.bind("<Button-3>", lambda e: self._pick(e, self.dir_canvas, "to"))
+        self.dir_canvas.bind("<Motion>", lambda e: self._hover(e, self.dir_canvas))
+
         # palette
-        pal_frame = ttk.LabelFrame(root, text="PETSCII  (left click = From, right click = To)",
-                                   padding=4)
+        pal_frame = ttk.LabelFrame(
+            root, text="PETSCII  (Replace: left click = From, right click = To;  "
+                       "Mask: left click = the sign to fill)", padding=4)
         pal_frame.pack(fill="x", padx=6, pady=(4, 0))
         side = 16 * (CELL * self.scale + 4) + 4
         self.pal_canvas = tk.Canvas(pal_frame, bg=BLUE, highlightthickness=0,
@@ -798,8 +1023,45 @@ class App:
                           fill=LIGHT_BLUE, anchor="w", font=("TkFixedFont",))
             c.create_text(x_name + self._x(type_col) + 40, y + CELL, text=r.kind,
                           fill=GREY, anchor="w", font=("TkFixedFont",))
-        c.configure(scrollregion=(0, 0, x_name + self._x(26), self._y(len(self.rows) + 1) + 4))
+        c.configure(scrollregion=(0, 0, x_name + self._x(30), self._y(len(self.rows) + 1) + 4))
+        self._draw_source_marks()
         self._register_drop_targets()       # the row checkboxes are new windows
+
+    def source_rows(self):
+        """The Mask's source lines as the box has them, or None while it does
+        not parse or names a line this disk does not have."""
+        text = self.mask_sources.get().strip()
+        if not text:
+            return []
+        try:
+            rows = sorted(set(parse_rows(text)))
+        except ValueError:
+            return None
+        if rows[-1] >= len(self.rows):
+            return None
+        return rows
+
+    def _draw_source_marks(self):
+        """Label the lines the Mask takes its signs from, right of the row."""
+        c = self.dir_canvas
+        c.delete("srcmark")
+        if self.image is None:
+            return
+        for i in self.source_rows() or ():
+            _cells, _quote, type_col = listing_columns(self.rows[i].name)
+            c.create_text(120 + self._x(type_col) + 76, self._y(i + 1) + CELL, text="< take",
+                          fill=LIGHT_BLUE, anchor="w", font=("TkFixedFont",),
+                          tags=("srcmark",))
+
+    def _sources_changed(self):
+        self._draw_source_marks()
+        self._refresh_apply()
+
+    def toggle_source(self, row):
+        """Right click on a line in the Mask tab: take signs from it, or stop."""
+        rows = set(self.source_rows() or ())
+        rows.symmetric_difference_update({row})
+        self.mask_sources.set(format_rows(rows))
 
     # ---- drag and drop (Windows) --------------------------------------------
 
@@ -935,7 +1197,24 @@ class App:
                 return int(tag[1:])
         return None
 
+    def _tag_row(self, canvas):
+        """The directory row of the cell under the pointer, or None."""
+        for tag in canvas.gettags("current"):
+            if tag.startswith("r") and tag[1:].isdigit():
+                return int(tag[1:])
+        return None
+
     def _pick(self, event, canvas, which):
+        if self.notebook.index(self.notebook.select()) == 1:    # the Mask tab
+            if which == "to":
+                row = self._tag_row(canvas) if canvas is self.dir_canvas else None
+                if row is not None:
+                    self.toggle_source(row)
+                return
+            b = self._tag_byte(canvas)
+            if b is not None:
+                self.set_mask(b)
+            return
         b = self._tag_byte(canvas)
         if b is None:
             return
@@ -959,6 +1238,11 @@ class App:
         self._draw_picker(self.to_box, b)
         self._refresh_apply()
 
+    def set_mask(self, b):
+        self.mask_char = b
+        self._draw_picker(self.mask_box, b)
+        self._refresh_apply()
+
     # ---- state ------------------------------------------------------------
 
     @property
@@ -970,10 +1254,18 @@ class App:
             return [r.index for r in self.rows]
         return [r.index for r, v in zip(self.rows, self.row_vars) if v.get()]
 
+    def ticked_rows(self):
+        return [r.index for r, v in zip(self.rows, self.row_vars) if v.get()]
+
     def _refresh_apply(self):
         ok = (self.image is not None and self.src is not None and self.dst is not None
               and self.src != self.dst and bool(self.chosen_rows()))
         self.apply_btn.configure(state="normal" if ok else "disabled")
+        mask_ok = (self.image is not None and self.mask_char is not None
+                   and bool(self.ticked_rows()) and bool(self.source_rows()))
+        again = self._mask_preview is not None and self.image is self._mask_preview
+        self.mask_btn.configure(state="normal" if mask_ok else "disabled",
+                                text="Mix again" if again else "Mix and fill")
         self.undo_btn.configure(state="normal" if self.undo_stack else "disabled")
         self.save_btn.configure(state="normal" if self.dirty else "disabled")
         self._refresh_title()
@@ -1023,8 +1315,13 @@ class App:
             return False
         self.path, self.image, self.on_disk, self.rows = path, image, image, rows
         self.undo_stack = []
+        self._mask_preview = None
+        self.warned_about_files = False
         self.last_label.configure(text="")
+        self.mask_label.configure(text="")
         self._reset_ticks()
+        if self.source_rows() is None:          # lines the last disk had, this one has not
+            self.mask_sources.set("")
         self._redraw_directory()
         self.status.configure(text=f"{os.path.basename(path)}: {len(rows)} rows")
         self._refresh_apply()
@@ -1054,14 +1351,145 @@ class App:
             self.last_label.configure(text="0 cells changed")
             self.status.configure(text="0 cells changed")
             return 0
+        note = f"{n} cells changed"
         self.undo_stack.append(self.image)
         self.image = new
         self.rows = directory(new)
         self._redraw_directory()
-        self.last_label.configure(text=f"last: {n} cells changed")
-        self.status.configure(text=f"{n} cells changed")
+        self.last_label.configure(text=f"last: {note}")
+        self.status.configure(text=note)
         self._refresh_apply()
         return n
+
+    def apply_mask(self):
+        """The Mask button: fill the placeholder in the ticked lines with
+        signs mixed from the source lines.
+
+        Pressed again straight after a fill, it takes that fill back and
+        mixes anew with the next mix number, so "not this one, another" is
+        one click and Undo still returns to the stamp.
+        """
+        if self.image is None or self.mask_char is None:
+            return 0
+        sources = self.source_rows()
+        if not sources:
+            self._error(BadArgs(
+                "Say which lines to take the signs from: right click them in the "
+                "directory, or type them in 'Take from', like 1-7."))
+            return 0
+        again = (self._mask_preview is not None and self.image is self._mask_preview
+                 and bool(self.undo_stack))
+        base = self.undo_stack[-1] if again else self.image
+        try:
+            text = self.mask_seed.get().strip()
+            seed = int(text) if text else 1
+        except ValueError:
+            self._error(BadArgs("The mix number is a whole number, like 1."))
+            return 0
+        if again:
+            seed += 1
+        listing = directory(base)
+        ticked = set(self.ticked_rows())
+        rows = [r.index for r in listing if r.index in ticked and self.mask_char in r.name]
+        files = [listing[i] for i in rows if listing[i].kind == "file"]
+        if files and not self.warned_about_files:
+            from tkinter import messagebox
+            if not messagebox.askokcancel(
+                    "dirarttool",
+                    f"This changes the LOAD name of {files[0].load_name}"
+                    + (f" and {len(files) - 1} more" if len(files) > 1 else "")
+                    + ". Continue?", parent=self.root):
+                return 0
+            self.warned_about_files = True
+        try:
+            new, filled, left = mask(base, self.mask_char, rows, sources=sources, seed=seed)
+        except DirArtError as exc:
+            self._error(exc)
+            return 0
+        note = f", {left} left (no sign to take in that column)" if left else ""
+        if filled == 0:
+            self.mask_label.configure(text=f"0 cells filled{note}")
+            self.status.configure(text=f"0 cells filled{note}")
+            return 0
+        if not again:
+            self.undo_stack.append(self.image)
+        self.mask_seed.set(str(seed))
+        self.image = self._mask_preview = new
+        self.rows = directory(new)
+        self._redraw_directory()
+        self.mask_label.configure(text=f"mix {seed}: {filled} cells filled{note}")
+        self.status.configure(text=f"mask, mix {seed}: {filled} cells filled{note}")
+        self._refresh_apply()
+        return filled
+
+    # ---- the header buffer -------------------------------------------------
+
+    @staticmethod
+    def _shown(raw):
+        """Buffer bytes as plain text for the status line."""
+        return display_name(bytes(5) + bytes(raw) + bytes(NAME_LEN))[:len(raw)]
+
+    def _copy(self, header, disk_id):
+        if self.image is None:
+            self.status.configure(text="open a disk first, then copy its header")
+            return False
+        said = []
+        if header:
+            self.clip_header = read_header(self.image)
+            said.append(f'header "{self._shown(self.clip_header)}"')
+        if disk_id:
+            self.clip_id = read_id(self.image)
+            said.append(f'ID "{self._shown(self.clip_id)}"')
+        self.status.configure(text="copied " + " and ".join(said)
+                              + " -- open the other disk and write it there")
+        return True
+
+    def _paste(self, header, disk_id):
+        if self.image is None:
+            self.status.configure(text="open a disk first")
+            return False
+        missing = [what for what, wanted, have in (("header", header, self.clip_header),
+                                                   ("ID", disk_id, self.clip_id))
+                   if wanted and have is None]
+        if missing:
+            self.status.configure(text=f"no {' or '.join(missing)} copied yet -- "
+                                       f"copy one from a disk first")
+            return False
+        try:
+            new, changed = write_header(self.image,
+                                        self.clip_header if header else None,
+                                        self.clip_id if disk_id else None)
+        except DirArtError as exc:
+            self._error(exc)
+            return False
+        what = " and ".join(w for w, on in (("header", header), ("ID", disk_id)) if on)
+        if changed == 0:
+            self.status.configure(text=f"this disk already has that {what}")
+            return False
+        self.undo_stack.append(self.image)
+        self.image = new
+        self._redraw_directory()
+        self.status.configure(text=f"{what} written -- Save to keep it")
+        self._refresh_apply()
+        return True
+
+    def copy_header(self):
+        return self._copy(True, False)
+
+    def paste_header(self):
+        return self._paste(True, False)
+
+    def copy_id(self):
+        return self._copy(False, True)
+
+    def paste_id(self):
+        return self._paste(False, True)
+
+    def copy_both(self):
+        return self._copy(True, True)
+
+    def paste_both(self):
+        return self._paste(True, True)
 
     def undo(self):
         if not self.undo_stack:
@@ -1089,7 +1517,8 @@ class App:
             initialfile=f"{stem}-dirart.d64",
             filetypes=[("C64 disk image", "*.d64")])
         if path:
-            self.save_as(path)
+            return self.save_as(path)
+        return False
 
     def save_as(self, path):
         """Write the image atomically; on failure the old file is untouched."""
@@ -1131,23 +1560,65 @@ def main(argv=None):
         return run_gui(argv[0])
 
     args = build_parser().parse_args(argv)
-    log = (lambda *a, **k: None) if args.quiet else print
+    def say(text):
+        # A path can hold characters the output's code page has no place for
+        # (a piped run under cp1252, a Japanese file name). The disk is
+        # already written by then; a progress line must not turn that into a
+        # crash, so such characters are printed escaped.
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            enc = sys.stdout.encoding or "ascii"
+            print(text.encode(enc, "backslashreplace").decode(enc))
+
+    log = (lambda *a, **k: None) if args.quiet else say
     if not args.d64:
         raise BadArgs("which disk? give a .d64")
 
-    mapping = parse_replace(args.replace)
+    mapping = parse_replace(args.replace) if args.replace else {}
+    heading = args.header_from is not None or args.id_from is not None
+    if not mapping and args.mask is None and not heading:
+        raise BadArgs("nothing to do: give --replace FROM=TO, --mask CHAR, "
+                      "--header-from or --id-from")
+    if args.mask is None and (args.mask_from is not None or args.seed is not None):
+        raise BadArgs("--mask-from and --seed only make sense with --mask")
+    if args.mask is not None and args.mask_from is None:
+        raise BadArgs("--mask needs --mask-from: the lines to take the signs from, "
+                      "like --mask-from 1-7")
     data = load(args.d64)
     rows = directory(data)
     chosen = select_rows(rows, args.rows, args.all_rows)
-    result, changed = replace(data, mapping, chosen)
+    result, changed = replace(data, mapping, chosen) if mapping else (data, 0)
+    filled = left = 0
+    if args.mask is not None:
+        placeholder = parse_char(args.mask)
+        # The Mask fills the stamp: the chosen rows that hold the placeholder.
+        now = directory(result)
+        mrows = [i for i in chosen if placeholder in now[i].name]
+        result, filled, left = mask(result, placeholder, mrows,
+                                    sources=args.mask_from, seed=args.seed)
+    head = 0
+    if heading:
+        name = read_header(load(args.header_from)) if args.header_from else None
+        disk_id = read_id(load(args.id_from)) if args.id_from else None
+        result, head = write_header(result, name, disk_id)
 
     if args.dry_run:
         print_listing(result, directory(result))
+    if mapping:
         log(f"[*] {changed} cells changed")
+    if args.mask is not None:
+        log(f"[*] mask: {filled} cells filled"
+            + (f", {left} left (no sign to take in that column)" if left else ""))
+    if heading:
+        what = " and ".join(w for w, on in (("header", args.header_from),
+                                            ("ID", args.id_from)) if on)
+        log(f"[*] {what} taken over, {head} bytes changed")
+
+    if args.dry_run:
         log("[*] dry run -- nothing written")
         return 0
 
-    log(f"[*] {changed} cells changed")
     out = args.out or args.d64
     save(out, result)
     log(f"[*] DONE -> {out}")

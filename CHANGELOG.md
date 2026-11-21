@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0 - unreleased
+
+The Mask and the header buffer. Both asked for by Baracuda after testing 1.0.0.
+
+- **Mask**, in its own tab: left-click the placeholder sign (the `1` of a stamp), right-click
+  the lines to take signs from or type them (`1-7`), press Mix and fill. Every placeholder in
+  the ticked lines gets the sign of the same column in one of those lines, and no two filled
+  lines come out the same when the sources allow it.
+- Pressing the button again gives the next mix; the mix number brings any mix back. Undo
+  returns to the stamp.
+- The source lines are always chosen, never guessed: separators, text and test rows on the
+  same disk cannot end up in the stamp.
+- **Header and ID buffer**: F1 copies the header of the open disk, F3 writes it onto the next
+  one. F5/F7 do the same for the ID, F2/F4 for both. Also in the new Header menu.
+- Command line: `--mask CHAR --mask-from ROWS [--seed N]`, `--header-from OTHER.D64`,
+  `--id-from OTHER.D64`. Row lists take ranges everywhere: `--rows 1-7,21`.
+- The directory pane is shared by both tabs.
+
+Fixed:
+
+- The window asked about renaming real files once per session; a second disk's files were
+  then renamed without a question. It asks once per disk now.
+- A refused save to a read-only disk left a full-size temporary file next to it (Windows).
+- A file name the output's code page cannot print crashed the run after the disk was
+  already written, with exit 1 (piped output). The name is printed escaped instead.
+- An empty row list (`--rows ""`) passed as "nothing to change" with exit 0. It is exit 2.
+
 ## 1.0.0 - 2026-11-19
 
 The Replacer.
