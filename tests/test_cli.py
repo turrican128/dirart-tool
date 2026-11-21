@@ -1,5 +1,6 @@
 """The command line, driven as a real subprocess."""
 import d64reader
+import dirarttool as dt
 
 
 def names(path):
@@ -84,7 +85,7 @@ def test_single_character_form(fixture, run_tool):
 
 
 def test_version(run_tool):
-    assert "1.0.0" in run_tool("--version", expect_ok=True).stdout
+    assert dt.__version__ in run_tool("--version", expect_ok=True).stdout
 
 
 def test_parse_char_is_strict():
@@ -100,4 +101,6 @@ def test_negative_row_is_refused(fixture, run_tool):
     p = fixture("baracuda-dir-file.d64")
     before = p.read_bytes()
     r = run_tool(p, "--replace", "D6=D1", "--rows", "1,-3", expect_ok=False)
-    assert r.returncode == 2 and "0..2" in r.stderr and p.read_bytes() == before
+    # "-3" cannot be a row: since row lists take ranges (1-7) it is refused
+    # when the list is read, before the disk is even opened.
+    assert r.returncode == 2 and "row numbers" in r.stderr and p.read_bytes() == before

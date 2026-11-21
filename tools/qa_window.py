@@ -8,7 +8,6 @@ methods the buttons call, and prints one line per checklist item. Dialogs
 are stubbed (a script has no finger), so what this proves is everything
 behind them: the engine calls, the row ticks, Undo, Save, and that a bad
 file or an unsaved quit never kills the window. Exit status 0 = all passed.
-
 Needs a display. Run by tools/qa.py; skipped there when Tk has none.
 """
 import os
@@ -74,6 +73,43 @@ def main():
           and cli.returncode == 0,
           "Undo restores, Apply again, Save writes it, the CLI dry run reads it back")
 
+    maskdisk = shutil.copy(os.path.join(FIX, "baracuda-mask-disk.d64"), tmp)
+    ok = app.open_path(maskdisk)
+    app.root.update()
+    files_before = [r.name for r in app.rows if r.kind == "file"]
+    app.set_mask(0x31)                                   # the "1" placeholders in the stamp
+    refused = app.apply_mask() == 0 and not app.dirty    # no source lines yet: nothing happens
+    app.mask_sources.set("1-7")                          # the finished art above the stamp
+    n = app.apply_mask()
+    app.root.update()
+    first = app.image
+    stamp = [r for r in app.rows if 28 <= r.index <= 48]
+    filled = (n == 255
+              and all(0x31 not in r.name for r in app.rows if r.kind == "art")
+              and len({r.name for r in stamp}) == len(stamp)
+              and [r.name for r in app.rows if r.kind == "file"] == files_before
+              and app.dirty)
+    again = app.apply_mask() == 255 and app.image != first and len(app.undo_stack) == 1
+    undone = app.undo()
+    restored = any(0x31 in r.name for r in app.rows if r.kind == "art") and not app.dirty
+    check(4, ok and refused and filled and again and undone and restored,
+          f"Mask tab: Fill $31 from lines 1-7 fills the stamp ({n} cells), every line "
+          f"different, files keep their names, the button again remixes, Undo restores")
+
+    header, disk_id = dt.read_header(app.image), dt.read_id(app.image)
+    copied = app.copy_both()
+    ok = app.open_path(bara)
+    app.root.update()
+    names_before = [r.name for r in app.rows]
+    wrote = app.paste_both()
+    app.root.update()
+    landed = (dt.read_header(app.image) == header and dt.read_id(app.image) == disk_id
+              and [r.name for r in app.rows] == names_before and app.dirty)
+    back = app.undo() and not app.dirty
+    check(5, copied and ok and wrote and landed and back,
+          "Header buffer: copy header + ID on one disk (F2), write them on another (F4), "
+          "rows untouched, Undo restores")
+
     ok = app.open_path(exam)
     app.root.update()
     files = [r.index for r in app.rows if r.kind == "file"]
@@ -85,12 +121,12 @@ def main():
     asked.clear()
     n = app.apply()
     warned = any(k == "okcancel" and "LOAD name of DEMO" in msg for k, msg in asked)
-    check(4, ok and not set(files) & set(ticked) and warned and app.rows[demo.index].load_name == "XEMO",
+    check(6, ok and not set(files) & set(ticked) and warned and app.rows[demo.index].load_name == "XEMO",
           f"examples.d64: file rows {files} start unticked; ticking DEMO warns, then DEMO -> XEMO")
 
     asked.clear()
     ok = app.open_path(txt)
-    check(5, ok is False and app.root.winfo_exists() == 1 and len(app.rows) == 12
+    check(7, ok is False and app.root.winfo_exists() == 1 and len(app.rows) == 12
           and any(k == "error" for k, _ in asked),
           "opening a .txt shows an error dialog, the window and the loaded disk survive")
 
@@ -120,13 +156,13 @@ def main():
         for _ in range(10):                  # the handler parks the paths; a Tk timer opens them
             app.root.update()
             time.sleep(0.03)
-        check(6, app.path == fresh and len(app.rows) == 3,
+        check(8, app.path == fresh and len(app.rows) == 3,
               "a .d64 dropped on the directory canvas (shell WM_DROPFILES) opens")
         app.set_from(0xD6)
         app.set_to(0xD1)
-        app.apply()                                  # unsaved again, so item 8 has something to ask about
+        app.apply()                                  # unsaved again, so item 9 has something to ask about
     else:
-        print("--   6. drop test skipped: not Windows")
+        print("--   8. drop test skipped: not Windows")
 
     asked.clear()
     app.quit()
@@ -137,7 +173,7 @@ def main():
         gone = not app.root.winfo_exists()
     except Exception:
         gone = True
-    check(7, alive and gone and any(k == "yesnocancel" for k, _ in asked),
+    check(9, alive and gone and any(k == "yesnocancel" for k, _ in asked),
           "quit with unsaved changes asks; Cancel keeps the window, Discard closes it")
 
     print("window checklist: all items passed")

@@ -19,5 +19,7 @@ def test_cli_never_imports_tkinter(fixture):
 def test_window_class_exists():
     assert callable(dt.run_gui)
     assert isinstance(dt.App, type)
-    for method in ("open_path", "set_from", "set_to", "apply", "undo", "save", "save_as"):
+    for method in ("open_path", "set_from", "set_to", "set_mask", "apply", "apply_mask",
+                   "toggle_source", "copy_header", "paste_header", "copy_id", "paste_id",
+                   "copy_both", "paste_both", "undo", "save", "save_as"):
         assert callable(getattr(dt.App, method))

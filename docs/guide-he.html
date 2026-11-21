@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dirarttool: מדריך קצר בעברית</title>
+<style>
+  :root {
+    --blue: #40318d;        /* הכחול של מסך ה־C64 */
+    --light: #867ade;       /* התכלת של האותיות */
+    --paper: #f6f4ff;
+    --ink: #1d1a33;
+    --soft: #5b5780;
+    --line: #d9d4f5;
+    --card: #ffffff;
+    --key: #ece9ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #17142b; --ink: #ecebff; --soft: #a9a5d6;
+      --line: #35306a; --card: #201c3d; --key: #2c2757;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Segoe UI", "Arial Hebrew", Arial, "Noto Sans Hebrew", sans-serif;
+    font-size: 18px; line-height: 1.75;
+  }
+  header {
+    background: var(--blue); color: #fff;
+    border-bottom: 8px solid var(--light);
+    padding: 44px 16px 36px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  header h1 { margin: 0 0 6px; font-size: 2.3rem; letter-spacing: .5px; }
+  header p { margin: 0; color: #d7d2ff; font-size: 1.15rem; }
+  .ready {
+    font-family: Consolas, "Courier New", monospace; color: var(--light);
+    direction: ltr; text-align: left; margin-top: 22px; font-size: .95rem;
+  }
+  main { padding: 28px 0 60px; }
+  h2 {
+    font-size: 1.55rem; margin: 44px 0 10px; padding-right: 14px;
+    border-right: 6px solid var(--light);
+  }
+  h3 { font-size: 1.15rem; margin: 26px 0 6px; }
+  p { margin: 10px 0; }
+  .lead { font-size: 1.15rem; }
+  nav {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 20px; margin-top: 8px;
+  }
+  nav b { display: block; margin-bottom: 4px; }
+  nav a { color: inherit; text-decoration-color: var(--light); margin-left: 14px; white-space: nowrap; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 14px 0; }
+  ol.steps li {
+    counter-increment: s; position: relative; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 62px 12px 16px; margin: 10px 0;
+  }
+  ol.steps li::before {
+    content: counter(s); position: absolute; right: 14px; top: 12px;
+    width: 34px; height: 34px; border-radius: 6px; background: var(--blue); color: #fff;
+    font-weight: 700; display: grid; place-items: center;
+  }
+  .en, kbd, code { direction: ltr; unicode-bidi: isolate; }
+  .en { font-weight: 600; }
+  kbd {
+    font-family: Consolas, "Courier New", monospace; font-size: .92em;
+    background: var(--key); border: 1px solid var(--line); border-bottom-width: 3px;
+    border-radius: 6px; padding: 1px 8px; white-space: nowrap;
+  }
+  code {
+    font-family: Consolas, "Courier New", monospace; font-size: .92em;
+    background: var(--key); border-radius: 5px; padding: 1px 6px;
+  }
+  pre {
+    direction: ltr; text-align: left; background: var(--blue); color: #e8e5ff;
+    border-radius: 10px; padding: 16px 18px; overflow-x: auto;
+    font-family: Consolas, "Courier New", monospace; font-size: .9rem; line-height: 1.6;
+  }
+  pre .c { color: var(--light); }
+  .note {
+    background: var(--card); border: 1px solid var(--line); border-right: 6px solid var(--light);
+    border-radius: 10px; padding: 12px 16px; margin: 16px 0;
+  }
+  .demo {
+    direction: ltr; text-align: center; background: var(--blue); color: #fff;
+    font-family: Consolas, "Courier New", monospace; border-radius: 10px;
+    padding: 14px; margin: 14px 0; font-size: 1.05rem; letter-spacing: 1px;
+  }
+  .demo span { color: var(--light); }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 9px 12px; text-align: right; }
+  th { background: var(--key); }
+  td.k { text-align: center; width: 90px; }
+  figure { margin: 18px 0; }
+  figure img { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; display: block; }
+  figcaption { color: var(--soft); font-size: .92rem; margin-top: 6px; }
+  dl dt { font-weight: 700; margin-top: 16px; }
+  dl dd { margin: 4px 0 0; }
+  footer { border-top: 1px solid var(--line); color: var(--soft); font-size: .92rem; padding: 18px 0 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1><span class="en">dirarttool</span></h1>
+    <p>מדריך קצר בעברית: מה הכלי עושה ואיך עובדים איתו</p>
+    <div class="ready">LOAD"$",8<br>READY.</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<nav>
+  <b>במדריך</b>
+  <a href="#what">מה זה</a>
+  <a href="#start">מתחילים</a>
+  <a href="#replace">Replace</a>
+  <a href="#mask">Mask</a>
+  <a href="#header">Header ו־ID</a>
+  <a href="#save">שמירה</a>
+  <a href="#cli">שורת פקודה</a>
+  <a href="#faq">שאלות</a>
+</nav>
+
+<h2 id="what">מה זה בכלל</h2>
+<p class="lead">כשמקלידים ב־<span class="en">C64</span> את <code>LOAD"$",8</code> ואז <code>LIST</code>, מקבלים את רשימת הקבצים שבדיסק. אנשי הסצנה גילו מזמן שאפשר לצייר בתוך הרשימה הזאת: שורות ריקות שהשם שלהן הוא בעצם ציור של 16 סימנים. לזה קוראים <span class="en">directory art</span>, או בקיצור <span class="en">dir art</span>.</p>
+<p>לצייר <span class="en">dir art</span> מאפס עושים בכלים אחרים, למשל <span class="en">DirMaster</span>. הכלי הזה בא אחר כך, כשהציור כבר קיים ורוצים לשנות בו משהו בכל השורות בבת אחת, בלי לעבור שורה שורה ביד.</p>
+<p>הוא עושה שלושה דברים:</p>
+<table>
+  <tr><th>מה</th><th>בשביל מה</th></tr>
+  <tr><td><span class="en">Replace</span></td><td>להחליף סימן אחד בסימן אחר, בכל השורות יחד.</td></tr>
+  <tr><td><span class="en">Mask</span></td><td>למלא את החורים בציור בסימנים שלוקחים משורות אחרות, מעורבבים.</td></tr>
+  <tr><td><span class="en">Header</span> ו־<span class="en">ID</span></td><td>להעתיק את כותרת הדיסק מדיסק אחד לדיסק אחר.</td></tr>
+</table>
+<div class="note">הכלי נוגע רק בשמות של השורות שבחרתם (ובכותרת, אם ביקשתם). הקבצים עצמם, הגדלים שלהם וכל שאר הדיסק נשארים בדיוק כמו שהיו.</div>
+<p>הרעיון ודיסקי הבדיקה של <span class="en">Baracuda/Blazon</span>, הקוד של <span class="en">DR.J/Delysid</span>.</p>
+
+<h2 id="start">מתחילים</h2>
+<ol class="steps">
+  <li>מורידים את קובץ ה־<span class="en">zip</span> מעמוד ה־<span class="en">Releases</span> ב־<span class="en">GitHub</span> ופותחים אותו. אין מה להתקין, גם לא <span class="en">Python</span>.</li>
+  <li>לחיצה כפולה על <code>dirarttool.exe</code>. נפתח חלון, ומאחוריו חלון שחור קטן. זה בסדר, הוא נסגר יחד עם הכלי.</li>
+  <li>לוחצים <span class="en">Open...</span> ובוחרים קובץ <code>.d64</code>, או פשוט גוררים את הקובץ לתוך החלון.</li>
+</ol>
+<p>עכשיו רואים את הדיסק כמו שה־<span class="en">C64</span> מציג אותו, עם הסימנים האמיתיים. כמה דברים שכדאי להכיר:</p>
+<ul>
+  <li><b>המספר האפור</b> משמאל לכל שורה הוא מספר השורה. הספירה מתחילה מ־0.</li>
+  <li><b>תיבת הסימון</b> ליד כל שורה קובעת אם הכלי ייגע בה. שורות ציור מסומנות מראש.</li>
+  <li><b>קבצים אמיתיים</b> לא מסומנים מראש. אם תסמנו אחד ותשנו את השם שלו, הכלי ישאל קודם, כי זה השם שמקלידים ב־<span class="en">LOAD</span>.</li>
+  <li><b>הטבלה הגדולה למטה</b> היא כל 256 הסימנים של <span class="en">PETSCII</span>. אפשר לבחור סימן גם ממנה.</li>
+</ul>
+
+<h2 id="replace"><span class="en">Replace</span>: להחליף סימן בסימן</h2>
+<p>הדוגמה הכי פשוטה: בדיסק יש שלוש שורות שאמורות להיראות אותו דבר, אבל באחת יש עיגול מלא, בשנייה איקס ובשלישית עיגול ריק.</p>
+<ol class="steps">
+  <li><b>קליק שמאלי</b> על הסימן שרוצים להחליף. הוא מופיע בתיבה <span class="en">From</span>.</li>
+  <li><b>קליק ימני</b> על הסימן שרוצים במקומו. הוא מופיע בתיבה <span class="en">To</span>.</li>
+  <li>לוחצים <span class="en">Apply</span>. בשורת המצב למטה כתוב כמה תאים השתנו.</li>
+</ol>
+<p>לא משנה באיזו שורה לחצתם על הסימן. ההחלפה קורית בכל השורות המסומנות.</p>
+<div class="note"><b>דבר אחד שמבלבל:</b> החלפה אחת מחליפה סימן אחד. אם בשלוש שורות יש שלושה סימנים שונים ואתם רוצים שכולם ייראו אותו דבר, עושים החלפה לכל סימן בנפרד. בוחרים <span class="en">From</span> חדש ולוחצים שוב <span class="en">Apply</span>. ה־<span class="en">To</span> נשאר.</div>
+<p>התחרטתם? <span class="en">Undo</span>, או <kbd>Ctrl+Z</kbd>.</p>
+
+<h2 id="mask"><span class="en">Mask</span>: למלא את החורים</h2>
+<p>כאן הרעיון קצת אחר. מציירים "חותמת" שבה המקומות הפנויים מסומנים בסימן זמני, נניח הספרה <code>1</code>. הכלי ממלא כל <code>1</code> בסימן שהוא לוקח משורות שאתם מצביעים עליהן, ומערבב כך שכל שורה תצא שונה. מה שכבר מצויר בחותמת לא זז.</p>
+<div class="demo">11<span>▚▞</span>111111111111 &nbsp;→&nbsp; <span>◤▙▚▞▛◆▟▜◥▙◢▛▚◣▞◆</span></div>
+<ol class="steps">
+  <li>עוברים ללשונית <span class="en">Mask</span>.</li>
+  <li><b>קליק שמאלי</b> על הסימן הזמני, למשל אחד ה־<code>1</code> שבחותמת. הוא מופיע בתיבה <span class="en">Fill</span>.</li>
+  <li><b>קליק ימני</b> על כל שורה שרוצים לקחת ממנה סימנים. ליד השורה יופיע <code>&lt; take</code>. קליק ימני נוסף מבטל. אפשר גם להקליד בתיבה <span class="en">Take from</span>, למשל <code>1-7</code> או <code>1-7,21-27</code>.</li>
+  <li>לוחצים <span class="en">Mix and fill</span>.</li>
+  <li>לא אהבתם? לוחצים שוב על אותו כפתור (עכשיו כתוב עליו <span class="en">Mix again</span>) ומקבלים ערבוב חדש. אפשר ללחוץ כמה פעמים שרוצים.</li>
+</ol>
+<figure>
+  <img src="window-mask.png" alt="לשונית Mask: הספרה 1 נבחרה כסימן למילוי, ושורות 1 עד 7 מסומנות כשורות שלוקחים מהן">
+  <figcaption>לשונית <span class="en">Mask</span> רגע לפני המילוי: ה־<code>1</code> נבחר, ושורות 1 עד 7 מסומנות ב־<code>&lt; take</code>.</figcaption>
+</figure>
+<h3>שלושה דברים שכדאי לדעת</h3>
+<ul>
+  <li><b>הכלי לא מנחש מאיפה לקחת.</b> חייבים לבחור שורות מקור. בדיסק יש גם קווי הפרדה, טקסט ושורות ניסוי, ואם הוא היה לוקח מכולן הייתם מקבלים אותיות ורווחים באמצע הציור.</li>
+  <li><b>כל סימן נלקח מאותו טור.</b> תא בטור 5 מקבל סימן שנמצא בטור 5 באחת משורות המקור. ככה המילוי נראה כמו הציור שממנו הוא בא.</li>
+  <li><b>המספר <span class="en">Mix no.</span></b> הוא השם של הערבוב. אם ערבוב מספר 4 היה הכי יפה, מקלידים 4 ומקבלים בדיוק אותו שוב.</li>
+</ul>
+<p>ממלאים רק את השורות המסומנות בתיבת הסימון. <span class="en">Undo</span> מחזיר את החותמת הריקה.</p>
+
+<h2 id="header"><span class="en">Header</span> ו־<span class="en">ID</span>: מדיסק לדיסק</h2>
+<p>השורה העליונה ברשימה היא כותרת הדיסק (<span class="en">Header</span>), ולידה ה־<span class="en">ID</span>. גם בהן מציירים. אם יש לכם כותרת יפה בדיסק אחד ורוצים אותה בדיסק אחר:</p>
+<ol class="steps">
+  <li>פותחים את הדיסק שממנו מעתיקים ולוחצים <kbd>F1</kbd>.</li>
+  <li>פותחים את הדיסק השני.</li>
+  <li>לוחצים <kbd>F3</kbd>. הכותרת מופיעה בו.</li>
+</ol>
+<table>
+  <tr><th>מקש</th><th>מה הוא עושה</th></tr>
+  <tr><td class="k"><kbd>F1</kbd></td><td>מעתיק את הכותרת מהדיסק הפתוח</td></tr>
+  <tr><td class="k"><kbd>F3</kbd></td><td>כותב את הכותרת שהועתקה על הדיסק הפתוח</td></tr>
+  <tr><td class="k"><kbd>F5</kbd></td><td>מעתיק את ה־<span class="en">ID</span></td></tr>
+  <tr><td class="k"><kbd>F7</kbd></td><td>כותב את ה־<span class="en">ID</span></td></tr>
+  <tr><td class="k"><kbd>F2</kbd></td><td>מעתיק כותרת ו־<span class="en">ID</span> יחד</td></tr>
+  <tr><td class="k"><kbd>F4</kbd></td><td>כותב כותרת ו־<span class="en">ID</span> יחד</td></tr>
+</table>
+<p>מה שהעתקתם נשאר בזיכרון גם כשפותחים דיסק אחר, אז אפשר לכתוב אותה כותרת על כמה דיסקים ברצף. אותן שש פעולות נמצאות גם בתפריט <span class="en">Header</span>.</p>
+<p>ה־<span class="en">ID</span> כאן הוא כל חמשת הסימנים שמופיעים אחרי הכותרת, כולל שני הסימנים של סוג ה־<span class="en">DOS</span>, כי ב־<span class="en">dir art</span> מציירים בכולם.</p>
+
+<h2 id="save">שמירה</h2>
+<p>כל מה שעשיתם עד עכשיו קרה רק בחלון. הקובץ בדיסק הקשיח עדיין לא השתנה.</p>
+<ul>
+  <li><span class="en">Save</span> (<kbd>Ctrl+S</kbd>) שומר על הקובץ המקורי.</li>
+  <li><span class="en">Save As...</span> (<kbd>Ctrl+Shift+S</kbd>) שומר בקובץ חדש, ומציע את השם <code>&lt;name&gt;-dirart.d64</code>.</li>
+  <li>כל עוד יש שינויים שלא נשמרו, כתוב <code>*unsaved</code> בכותרת החלון. אם תנסו לסגור או לפתוח דיסק אחר, הכלי ישאל קודם.</li>
+</ul>
+<div class="note">עצה: בפעמים הראשונות תשמרו עם <span class="en">Save As</span>. ככה הדיסק המקורי נשאר אצלכם עד שאתם בטוחים בתוצאה.</div>
+
+<h2 id="cli">למי שאוהב שורת פקודה</h2>
+<p>אותו קובץ <code>exe</code> עובד גם בלי חלון, וזה נוח כשבונים דיסק מתוך סקריפט. כמה דוגמאות:</p>
+<pre><span class="c"># להחליף שני סימנים בכל שורות הציור</span>
+dirarttool disk.d64 --replace D6=D1 --replace D7=D1
+
+<span class="c"># רק להראות מה ייצא, בלי לכתוב כלום</span>
+dirarttool disk.d64 --replace 0=- --rows 1-3 --dry-run
+
+<span class="c"># למלא כל 1 בסימנים משורות 1 עד 7, לקובץ חדש</span>
+dirarttool disk.d64 --mask 1 --mask-from 1-7 -o out.d64
+
+<span class="c"># לקחת כותרת ו-ID מדיסק אחר</span>
+dirarttool disk.d64 --header-from other.d64 --id-from other.d64</pre>
+<p>סימן כותבים בשתי ספרות <span class="en">hex</span> (כמו <code>D6</code>) או כתו אחד (כמו <code>X</code>). בלי <code>-o</code> הכלי כותב על הקובץ עצמו. כדי לגעת גם בקבצים אמיתיים צריך להוסיף <code>--all-rows</code>. הפירוט המלא נמצא ב־<span class="en">README</span> באנגלית.</p>
+
+<h2 id="faq">שאלות שעולות</h2>
+<dl>
+  <dt>לחצתי <span class="en">Apply</span> ולא כל הסימנים השתנו. באג?</dt>
+  <dd>כנראה שלא. הכלי מחליף רק את הסימן שבחרתם ב־<span class="en">From</span>. שני סימנים שנראים דומים (עיגול מלא ועיגול ריק, למשל) הם שני סימנים שונים. תעבירו את העכבר מעל כל אחד ותסתכלו בשורת המצב למטה: כתוב שם הקוד שלו, כמו <code>$D1</code> או <code>$D7</code>. לכל קוד עושים החלפה משלו.</dd>
+
+  <dt>הכפתור <span class="en">Mix and fill</span> אפור ואי אפשר ללחוץ עליו.</dt>
+  <dd>חסר אחד משלושה דברים: סימן ב־<span class="en">Fill</span>, שורות מקור ב־<span class="en">Take from</span>, או לפחות שורה אחת מסומנת. אם הקלדתם מספר שורה שלא קיים בדיסק, הכפתור גם יישאר אפור.</dd>
+
+  <dt>כתוב לי "<span class="en">left</span>" אחרי המילוי, עם מספר.</dt>
+  <dd>אלה תאים שנשארו עם הסימן הזמני, כי באף שורת מקור לא היה סימן מתאים באותו טור. תוסיפו עוד שורות מקור ותערבבו שוב.</dd>
+
+  <dt>אפשר להרוס ככה משחק או דמו שנמצא על הדיסק?</dt>
+  <dd>את התוכן של הקבצים לא. הכלי לא נוגע בו בכלל. מה שכן אפשר: לשנות שם של קובץ אמיתי, ואז הטוען שמחפש אותו לפי השם לא ימצא אותו. בגלל זה קבצים אמיתיים לא מסומנים מראש והכלי שואל לפני שהוא משנה להם שם.</dd>
+
+  <dt>איזה דיסקים הוא פותח?</dt>
+  <dd>קובצי <code>.d64</code> של 35 או 40 מסילות. לא <code>.d71</code>, לא <code>.d81</code> ולא <code>.g64</code>. דיסק שהספרייה שלו פגומה הוא מסרב לפתוח, ועדיף ככה.</dd>
+
+  <dt>הוא יודע להוסיף שורות או לצייר תא תא?</dt>
+  <dd>לא. בשביל זה יש <span class="en">DirMaster</span>, ו־<span class="en">txt2dirart</span> אם הציור שלכם יושב בקובץ טקסט. הכלי הזה עושה רק שינויים רוחביים בציור שכבר קיים.</dd>
+</dl>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="en">dirarttool</span>, גרסה 1.1.0. רישיון <span class="en">MIT</span>. המדריך המלא באנגלית: <span class="en">README.md</span>.
+  </div>
+</footer>
+
+</body>
+</html>
