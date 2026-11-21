@@ -132,7 +132,7 @@ jobs:
           chmod +x "$DIR/dirarttool"
           cp dirarttool.py README.md CHANGELOG.md LICENSE "$DIR/"
           # The README embeds this; without it the image is dead offline.
-          cp docs/window.png docs/window-mask.png "$DIR/docs/"
+          cp docs/window.png docs/window-mask.png docs/guide-he.html "$DIR/docs/"
           # Baracuda's test disk: the example the README walks through.
           cp tests/fixtures/baracuda-dir-file.d64 "$DIR/example-baracuda.d64"
           # His second disk: a stamp full of 1s, the example for the Mask.
@@ -143,7 +143,7 @@ jobs:
           unzip -l "${DIR}.zip"
           # A file the zip is supposed to carry going missing must fail the build.
           required="dirarttool dirarttool.exe dirarttool.py README.md CHANGELOG.md LICENSE"
-          required="$required docs/window.png docs/window-mask.png example-baracuda.d64 example-mask.d64"
+          required="$required docs/window.png docs/window-mask.png docs/guide-he.html example-baracuda.d64 example-mask.d64"
           listing=$(unzip -Z1 "${DIR}.zip")
           for f in $required; do
             echo "$listing" | grep -qxF "${DIR}/${f}" || { echo "::error::missing from the zip: $f"; exit 1; }

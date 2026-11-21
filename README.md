@@ -20,6 +20,8 @@ The same thing in the window, with the glyphs as the C64 draws them:
 
 ![The dirarttool window, loaded with the Baracuda disk after one replace](docs/window.png)
 
+A short guide in Hebrew: [docs/guide-he.html](docs/guide-he.html) (מדריך קצר בעברית).
+
 Only the 16 name bytes of the rows you pick are ever written, plus the header and ID when you ask for those. File types, block counts, sector links, the block map and every data sector stay exactly as they were.
 
 ---
