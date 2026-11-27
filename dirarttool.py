@@ -454,7 +454,9 @@ def tag_at(name, col):
 
 
 def _check_tag(tag, what="tag"):
-    tag = bytes(tag or b"")
+    # A blank at the end of a tag cannot be told from the padding behind a
+    # name, so "/X " would never be found again and be added a second time.
+    tag = bytes(tag or b"").rstrip(bytes([0x20, PAD_SHIFTED]))
     if not 1 <= len(tag) <= NAME_LEN:
         raise BadArgs(f"a {what} is 1 to {NAME_LEN} signs, got {len(tag)}")
     return tag
@@ -1962,6 +1964,7 @@ class App:
             return
         var = self.tag_text if which == "tag" else self.new_tag_text
         text = var.get()
+        text = text.rstrip()                # blanks at the end are padding, not tag
         ok = text and len(text) <= NAME_LEN and all(32 <= ord(ch) < 127 for ch in text)
         setattr(self, which, text.upper().encode("ascii") if ok else None)
         self._draw_tags()

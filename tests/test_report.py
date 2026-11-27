@@ -183,6 +183,23 @@ def test_the_padding_of_a_line_is_kept(fixture):
     assert listing[55].name == b"  /BLZ!" + b"\xa0" * 9      # was padded with $A0
 
 
+def test_blanks_at_the_end_of_a_tag_are_not_part_of_it(fixture):
+    """A tag typed as "/X " once got added again on every click: the blank
+    looks like padding, so the line never seemed to end with the tag."""
+    data = dt.load(fixture("examples.d64"))
+    out = data
+    for _ in range(3):
+        out, done, _ = dt.set_tag(out, [9], b"/X " + bytes([0xA0]))
+    assert dt.directory(out)[9].name == b"================"       # full line: no room, untouched
+    out, done, _ = dt.set_tag(data, [2], b"/X  ")
+    assert done == 1 and dt.directory(out)[2].name == b"     V1.0/X     "
+    again, done, _ = dt.set_tag(out, [2], b"/X  ")
+    assert done == 0 and again == out
+    assert dt.parse_tag("/x  ") == b"/X"
+    with pytest.raises(dt.BadArgs):
+        dt.set_tag(data, [2], b"   ")                             # nothing but blanks
+
+
 def test_tag_refusals(fixture):
     data = dt.load(fixture(DISK2))
     rows = dt.directory(data)
