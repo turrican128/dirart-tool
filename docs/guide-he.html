@@ -122,6 +122,8 @@
   <a href="#replace">Replace</a>
   <a href="#mask">Mask</a>
   <a href="#header">Header ו־ID</a>
+  <a href="#tag">Tag</a>
+  <a href="#extras">Extras</a>
   <a href="#save">שמירה</a>
   <a href="#cli">שורת פקודה</a>
   <a href="#faq">שאלות</a>
@@ -130,12 +132,13 @@
 <h2 id="what">מה זה בכלל</h2>
 <p class="lead">כשמקלידים ב־<span class="en">C64</span> את <code>LOAD"$",8</code> ואז <code>LIST</code>, מקבלים את רשימת הקבצים שבדיסק. אנשי הסצנה גילו מזמן שאפשר לצייר בתוך הרשימה הזאת: שורות ריקות שהשם שלהן הוא בעצם ציור של 16 סימנים. לזה קוראים <span class="en">directory art</span>, או בקיצור <span class="en">dir art</span>.</p>
 <p>לצייר <span class="en">dir art</span> מאפס עושים בכלים אחרים, למשל <span class="en">DirMaster</span>. הכלי הזה בא אחר כך, כשהציור כבר קיים ורוצים לשנות בו משהו בכל השורות בבת אחת, בלי לעבור שורה שורה ביד.</p>
-<p>הוא עושה שלושה דברים:</p>
+<p>הוא עושה ארבעה דברים:</p>
 <table>
   <tr><th>מה</th><th>בשביל מה</th></tr>
   <tr><td><span class="en">Replace</span></td><td>להחליף סימן אחד בסימן אחר, בכל השורות יחד.</td></tr>
   <tr><td><span class="en">Mask</span></td><td>למלא את החורים בציור בסימנים שלוקחים משורות אחרות, מעורבבים.</td></tr>
   <tr><td><span class="en">Header</span> ו־<span class="en">ID</span></td><td>להעתיק את כותרת הדיסק מדיסק אחד לדיסק אחר.</td></tr>
+  <tr><td><span class="en">Tag</span></td><td>להוסיף או להחליף את סימן הקבוצה שבסוף השם, כמו <code>/DELYSID</code>.</td></tr>
 </table>
 <div class="note">הכלי נוגע רק בשמות של השורות שבחרתם (ובכותרת, אם ביקשתם). הקבצים עצמם, הגדלים שלהם וכל שאר הדיסק נשארים בדיוק כמו שהיו.</div>
 <p>הרעיון ודיסקי הבדיקה של <span class="en">Baracuda/Blazon</span>, הקוד של <span class="en">DR.J/Delysid</span>.</p>
@@ -149,7 +152,9 @@
 <p>עכשיו רואים את הדיסק כמו שה־<span class="en">C64</span> מציג אותו, עם הסימנים האמיתיים. כמה דברים שכדאי להכיר:</p>
 <ul>
   <li><b>המספר האפור</b> משמאל לכל שורה הוא מספר השורה. הספירה מתחילה מ־0.</li>
-  <li><b>תיבת הסימון</b> ליד כל שורה קובעת אם הכלי ייגע בה. שורות ציור מסומנות מראש.</li>
+  <li><b>תיבת הסימון</b> ליד כל שורה קובעת אם הכלי ייגע בה. שורות ציור מסומנות מראש, מכל סוג קובץ (<span class="en">DEL</span>, <span class="en">PRG</span>, <span class="en">SEQ</span> ואחרים), כל עוד יש להן 0 בלוקים ואין מאחוריהן מידע.</li>
+  <li><b>לסמן או לנקות הכול:</b> <kbd>T</kbd> מסמן את כל השורות, <kbd>U</kbd> מנקה את כולן. שניהם גם בתפריט <span class="en">Edit</span>.</li>
+  <li><b>הרשימה מלאה:</b> מהכותרת עם כל חמשת סימני ה־<span class="en">ID</span> ועד השורה <code>BLOCKS FREE.</code> בסוף. גלגלת העכבר גוללת אותה.</li>
   <li><b>קבצים אמיתיים</b> לא מסומנים מראש. אם תסמנו אחד ותשנו את השם שלו, הכלי ישאל קודם, כי זה השם שמקלידים ב־<span class="en">LOAD</span>.</li>
   <li><b>הטבלה הגדולה למטה</b> היא כל 256 הסימנים של <span class="en">PETSCII</span>. אפשר לבחור סימן גם ממנה.</li>
 </ul>
@@ -163,7 +168,7 @@
 </ol>
 <p>לא משנה באיזו שורה לחצתם על הסימן. ההחלפה קורית בכל השורות המסומנות.</p>
 <div class="note"><b>דבר אחד שמבלבל:</b> החלפה אחת מחליפה סימן אחד. אם בשלוש שורות יש שלושה סימנים שונים ואתם רוצים שכולם ייראו אותו דבר, עושים החלפה לכל סימן בנפרד. בוחרים <span class="en">From</span> חדש ולוחצים שוב <span class="en">Apply</span>. ה־<span class="en">To</span> נשאר.</div>
-<p>התחרטתם? <span class="en">Undo</span>, או <kbd>Ctrl+Z</kbd>.</p>
+<p>התחרטתם? <span class="en">Undo</span>, או <kbd>Ctrl+Z</kbd>. התחרטתם על ההתחרטות? <span class="en">Redo</span>, או <kbd>Ctrl+Y</kbd>. כשאין יותר מה לבטל, הכפתור נהיה אפור.</p>
 
 <h2 id="mask"><span class="en">Mask</span>: למלא את החורים</h2>
 <p>כאן הרעיון קצת אחר. מציירים "חותמת" שבה המקומות הפנויים מסומנים בסימן זמני, נניח הספרה <code>1</code>. הכלי ממלא כל <code>1</code> בסימן שהוא לוקח משורות שאתם מצביעים עליהן, ומערבב כך שכל שורה תצא שונה. מה שכבר מצויר בחותמת לא זז.</p>
@@ -176,16 +181,19 @@
   <li>לא אהבתם? לוחצים שוב על אותו כפתור (עכשיו כתוב עליו <span class="en">Mix again</span>) ומקבלים ערבוב חדש. אפשר ללחוץ כמה פעמים שרוצים.</li>
 </ol>
 <figure>
-  <img src="window-mask.png" alt="לשונית Mask: הספרה 1 נבחרה כסימן למילוי, ושורות 1 עד 7 מסומנות כשורות שלוקחים מהן">
-  <figcaption>לשונית <span class="en">Mask</span> רגע לפני המילוי: ה־<code>1</code> נבחר, ושורות 1 עד 7 מסומנות ב־<code>&lt; take</code>.</figcaption>
+  <img src="window-mask.png" alt="לשונית Mask אחרי ערבוב: החותמת מולאה בסימנים משורות 1 עד 7">
+  <figcaption>לשונית <span class="en">Mask</span> אחרי ערבוב: ה־<code>1</code> של החותמת התמלאו בחתיכות שלמות משורות 1 עד 7.</figcaption>
 </figure>
 <h3>שלושה דברים שכדאי לדעת</h3>
 <ul>
   <li><b>הכלי לא מנחש מאיפה לקחת.</b> חייבים לבחור שורות מקור. בדיסק יש גם קווי הפרדה, טקסט ושורות ניסוי, ואם הוא היה לוקח מכולן הייתם מקבלים אותיות ורווחים באמצע הציור.</li>
-  <li><b>כל סימן נלקח מאותו טור.</b> תא בטור 5 מקבל סימן שנמצא בטור 5 באחת משורות המקור. ככה המילוי נראה כמו הציור שממנו הוא בא.</li>
+  <li><b>שלוש דרכים לקחת</b> (הבחירה <span class="en">Take</span>):
+    <span class="en">same column</span> לוקח סימן מאותו טור באחת משורות המקור, וככה המילוי נראה כמו הציור שממנו הוא בא.
+    <span class="en">any column</span> לוקח כל סימן משורות המקור, מכל מקום.
+    <span class="en">whole pieces</span> ממלא כל רצף של סימנים זמניים בחתיכה שלמה משורת מקור אחת, כך שסימנים ששייכים יחד נשארים יחד.</li>
   <li><b>המספר <span class="en">Mix no.</span></b> הוא השם של הערבוב. אם ערבוב מספר 4 היה הכי יפה, מקלידים 4 ומקבלים בדיוק אותו שוב.</li>
 </ul>
-<p>ממלאים רק את השורות המסומנות בתיבת הסימון. <span class="en">Undo</span> מחזיר את החותמת הריקה.</p>
+<p>ממלאים רק את השורות המסומנות בתיבת הסימון. <span class="en">Undo</span> מחזיר את החותמת הריקה, וגם את מספר הערבוב.</p>
 
 <h2 id="header"><span class="en">Header</span> ו־<span class="en">ID</span>: מדיסק לדיסק</h2>
 <p>השורה העליונה ברשימה היא כותרת הדיסק (<span class="en">Header</span>), ולידה ה־<span class="en">ID</span>. גם בהן מציירים. אם יש לכם כותרת יפה בדיסק אחד ורוצים אותה בדיסק אחר:</p>
@@ -205,6 +213,21 @@
 </table>
 <p>מה שהעתקתם נשאר בזיכרון גם כשפותחים דיסק אחר, אז אפשר לכתוב אותה כותרת על כמה דיסקים ברצף. אותן שש פעולות נמצאות גם בתפריט <span class="en">Header</span>.</p>
 <p>ה־<span class="en">ID</span> כאן הוא כל חמשת הסימנים שמופיעים אחרי הכותרת, כולל שני הסימנים של סוג ה־<span class="en">DOS</span>, כי ב־<span class="en">dir art</span> מציירים בכולם.</p>
+
+<h2 id="tag"><span class="en">Tag</span>: סימן הקבוצה שבסוף השם</h2>
+<p>הרבה שמות בדיסק נגמרים באותה תוספת, למשל <code>BUMSDIBUMS/DELYSID</code>. ה־<code>/DELYSID</code> הוא ה־<span class="en">Tag</span>. בלשונית <span class="en">Tag</span> אפשר להעתיק אותו משורה אחת, להדביק אותו לשורות אחרות, ולהחליף אותו בכולן ביום שעוברים קבוצה.</p>
+<ol class="steps">
+  <li><b>קליק שמאלי</b> על הסימן הראשון של ה־<span class="en">Tag</span> בשורה שיש לה אותו, למשל על ה־<code>/</code>. ה־<span class="en">Tag</span> הוא כל מה שמשם ועד סוף השם.</li>
+  <li>מסמנים את השורות שצריכות לקבל אותו ולוחצים <span class="en">Set tag</span>. הוא נדבק מיד אחרי השם.</li>
+  <li>כדי להחליף: <b>קליק ימני</b> על תחילת ה־<span class="en">Tag</span> החדש באיזו שורה, או מקלידים אותו בתיבה <span class="en">New tag</span>, ולוחצים <span class="en">Change tag to new tag</span>. כל שורה מסומנת שנגמרת ב־<span class="en">Tag</span> הישן מקבלת את החדש.</li>
+</ol>
+<div class="note">שם הוא 16 סימנים, לא יותר. שורה שהשם שלה יחד עם ה־<span class="en">Tag</span> ארוך מ־16 נשארת כמו שהיא, והכלי כותב כמה כאלה היו. שורה שכבר נגמרת ב־<span class="en">Tag</span> לא מקבלת אותו פעמיים.</div>
+
+<h2 id="extras"><span class="en">Extras</span>: צבעים ותמונה</h2>
+<ul>
+  <li><span class="en">Background colour</span> ו־<span class="en">Letter colour</span>: צבע הרקע וצבע האותיות, מתוך 16 הצבעים של ה־<span class="en">C64</span>.</li>
+  <li><span class="en">Save directory as picture...</span> (<kbd>Ctrl+P</kbd>) שומר את כל הרשימה כתמונת <span class="en">PNG</span>, מהכותרת ועד <code>BLOCKS FREE.</code>, בצבעים שעל המסך. שימושי כשרוצים להראות למישהו מה יצא, או לדווח על תקלה.</li>
+</ul>
 
 <h2 id="save">שמירה</h2>
 <p>כל מה שעשיתם עד עכשיו קרה רק בחלון. הקובץ בדיסק הקשיח עדיין לא השתנה.</p>
@@ -227,7 +250,13 @@ dirarttool disk.d64 --replace 0=- --rows 1-3 --dry-run
 dirarttool disk.d64 --mask 1 --mask-from 1-7 -o out.d64
 
 <span class="c"># לקחת כותרת ו-ID מדיסק אחר</span>
-dirarttool disk.d64 --header-from other.d64 --id-from other.d64</pre>
+dirarttool disk.d64 --header-from other.d64 --id-from other.d64
+
+<span class="c"># להחליף את סימן הקבוצה בכל שורות הציור</span>
+dirarttool disk.d64 --change-tag /delysid=-triad
+
+<span class="c"># לשמור את הרשימה כתמונה</span>
+dirarttool disk.d64 --picture listing.png</pre>
 <p>סימן כותבים בשתי ספרות <span class="en">hex</span> (כמו <code>D6</code>) או כתו אחד (כמו <code>X</code>). בלי <code>-o</code> הכלי כותב על הקובץ עצמו. כדי לגעת גם בקבצים אמיתיים צריך להוסיף <code>--all-rows</code>. הפירוט המלא נמצא ב־<span class="en">README</span> באנגלית.</p>
 
 <h2 id="faq">שאלות שעולות</h2>
@@ -255,7 +284,7 @@ dirarttool disk.d64 --header-from other.d64 --id-from other.d64</pre>
 
 <footer>
   <div class="wrap">
-    <span class="en">dirarttool</span>, גרסה 1.1.0. רישיון <span class="en">MIT</span>. המדריך המלא באנגלית: <span class="en">README.md</span>.
+    <span class="en">dirarttool</span>, גרסה 1.2.0. רישיון <span class="en">MIT</span>. המדריך המלא באנגלית: <span class="en">README.md</span>.
   </div>
 </footer>
 

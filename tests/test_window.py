@@ -51,9 +51,8 @@ def test_mask_fills_the_stamp_and_undoes(app, fixture):
     app.set_mask(0x31)                                   # the "1" placeholders
     app.mask_sources.set("1-7")
     n = app.apply_mask()
-    assert n == 255
-    assert all(0x31 not in r.name for r in app.rows if r.kind == "art")
-    assert any(0x31 in r.name for r in app.rows if r.kind == "file")  # files untouched
+    assert n == 271                                      # the stamp and lines 51-53
+    assert all(0x31 not in r.name for r in app.rows)
     assert app.dirty
     assert app.undo()
     assert any(0x31 in r.name for r in app.rows if r.kind == "art")
@@ -208,16 +207,16 @@ def test_pressing_the_mask_button_again_gives_another_mix(app, fixture):
     app.open_path(str(fixture("baracuda-mask-disk.d64")))
     app.set_mask(0x31)
     app.mask_sources.set("1-7")
-    assert app.apply_mask() == 255
+    assert app.apply_mask() == 271
     first = app.image
     assert app.mask_seed.get() == "1" and app.mask_btn["text"] == "Mix again"
-    assert app.apply_mask() == 255
+    assert app.apply_mask() == 271
     assert app.image != first and app.mask_seed.get() == "2"
     assert len(app.undo_stack) == 1                  # one Undo still returns to the stamp
     app.undo()
     assert app.image == app.on_disk and app.mask_btn["text"] == "Mix and fill"
     app.mask_seed.set("1")
-    assert app.apply_mask() == 255
+    assert app.apply_mask() == 271
     assert app.image == first                        # a mix number names one mix
 
 

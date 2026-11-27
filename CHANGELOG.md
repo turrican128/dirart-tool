@@ -1,6 +1,36 @@
 # Changelog
 
-## 1.1.0 - unreleased
+## 1.2.0 - unreleased
+
+Baracuda's report on 1.1.0: five bugs, his wishes for the Edit menu and an Extras menu, and
+the next round of the Mask.
+
+Fixed:
+
+- The ID was not shown like it is. A listing prints five signs after the header; the window
+  and the command line dropped the third one and showed a space, so `2026` read `2 26` and
+  `KOELN` read `KO LN`.
+- The directory now runs down to `BLOCKS FREE.`, in the window and on the command line, and
+  the directory pane is taller, scrolls with the mouse wheel and grows with the window.
+- Undo goes grey, in the toolbar and in the Edit menu, when everything is undone.
+- Lines of every file type count as art when they own no data: 0 blocks and a DEL, or any
+  type pointing at track 0 or the directory track. 1.1.0 only knew DEL, so PRG, SEQ, USR
+  and REL art lines started unticked. Types are listed as they are (`???` for the strange
+  ones). A 0-block entry pointing at a data track is still a real file.
+- Undo after a mix puts the mix number back.
+
+New:
+
+- **Redo** (Ctrl+Y), and **Tick all lines** / **Untick all lines** (T / U), in the Edit menu.
+- **Extras** menu: background colour, letter colour (the sixteen of the machine), and
+  **Save directory as picture** (Ctrl+P), a PNG of the whole listing for bug reports.
+- Mask: *Take* **same column** (as before), **any column**, or **whole pieces** of one line.
+- **Tag** tab: copy the group sign behind a name (`/DELYSID`), set it behind other names,
+  change it to a new one wherever it stands.
+- Command line: `--mask-mode`, `--set-tag`, `--change-tag OLD=NEW`, `--picture OUT.PNG`.
+- The PETSCII table is 32 signs wide and 8 high, so the window fits a 1024 x 768 screen.
+
+## 1.1.0 - 2026-11-21
 
 The Mask and the header buffer. Both asked for by Baracuda after testing 1.0.0.
 

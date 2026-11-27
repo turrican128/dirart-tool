@@ -11,6 +11,7 @@ $ dirarttool "Baracuda - dir file.d64" --replace D6=D1 --replace D7=D1 --dry-run
   0      0 "..  BARACUDA  .." del
   1      0 "..  BARACUDA  .." del
   2      0 "..  BARACUDA  .." del
+       664 blocks free.
 
 [*] 4 cells changed
 [*] dry run -- nothing written
@@ -18,7 +19,7 @@ $ dirarttool "Baracuda - dir file.d64" --replace D6=D1 --replace D7=D1 --dry-run
 
 The same thing in the window, with the glyphs as the C64 draws them:
 
-![The dirarttool window, loaded with the Baracuda disk after one replace](docs/window.png)
+![The dirarttool window with Baracuda's second test disk](docs/window.png)
 
 A short guide in Hebrew: [docs/guide-he.html](docs/guide-he.html) (מדריך קצר בעברית).
 
@@ -58,6 +59,8 @@ All of them come from Baracuda/Blazon, who had been looking for someone to code 
 
 **Header and ID buffer.** Copy the header of one disk, open another and write it there. The same for the ID, or both together.
 
+**Tag.** The group sign behind a name: `BUMSDIBUMS/DELYSID`. Copy the tag from one line, set it behind the names of other lines, or swap it for a new one in every line that carries it, the day the group changes.
+
 ## Install
 
 **Binaries** need nothing on the machine, not even Python. Grab the zip from Releases:
@@ -73,7 +76,9 @@ Double-click the exe for the window. On Windows a console window opens behind it
 
 ## The window
 
-**Open** a `.d64`, or **drop one onto the window** from Explorer. The directory is drawn the way `LOAD"$",8` lists it, with the real C64 glyphs. Art rows are ticked, real files are not, and a grey number on the left is the row index the command line uses. (Dropping onto the window is Windows-only; it talks to the shell directly, no extra package. Dropping a `.d64` onto `dirarttool.exe` itself works too, on any system: the file is passed as the one argument and the window opens with it.)
+**Open** a `.d64`, or **drop one onto the window** from Explorer. The directory is drawn the way `LOAD"$",8` lists it, with the real C64 glyphs, from the header with all five ID signs down to `BLOCKS FREE.` The mouse wheel scrolls it and the pane grows with the window. Art rows are ticked, real files are not, and a grey number on the left is the row index the command line uses.
+
+A row is **art** when it shows 0 blocks and owns no data: a DEL, or a row of any other type (PRG, SEQ, USR, REL, stranger ones) that points at track 0 or at the directory track, which is where dir art editors point their rows. An entry with 0 blocks that points at a data track is a real file with a hidden size and is treated as a file. **Edit > Tick all lines** (T) and **Untick all lines** (U) set every tick at once. (Dropping onto the window is Windows-only; it talks to the shell directly, no extra package. Dropping a `.d64` onto `dirarttool.exe` itself works too, on any system: the file is passed as the one argument and the window opens with it.)
 
 ### Replace
 
@@ -88,9 +93,17 @@ Double-click the exe for the window. On Windows a console window opens behind it
 3. **Mix and fill.** Every placeholder in the ticked lines gets the sign of the same column in one of the source lines, picked at random, and no two filled lines come out the same when the sources allow it.
 4. Not the one? Press the button again (**Mix again**) for the next mix. The *Mix no.* names the mix, so typing a number brings that exact one back. **Undo** returns to the empty stamp.
 
-![The Mask tab: the 1 picked as the sign to fill, lines 1 to 7 marked as the lines to take from](docs/window-mask.png)
+![The Mask tab after a mix: the stamp's 1s filled with whole pieces of lines 1 to 7](docs/window-mask.png)
 
-A column where no source line has a usable sign is left as it is and counted in the status. A source cell holding the placeholder itself, `$A0` or `$00` is never taken.
+*Take* chooses how a sign is picked:
+
+| | |
+|---|---|
+| **same column** | the sign in the same column of one of the source lines. A filled line keeps the look of the art it was taken from. |
+| **any column** | any sign of the source lines, wherever it stands. A looser mix. |
+| **whole pieces** | every run of placeholders is filled with the same stretch of one single source line, so signs that belong together stay together. |
+
+A cell where no source line has a usable sign is left as it is and counted in the status. A source cell holding the placeholder itself, `$A0` or `$00` is never taken. **Undo** after a mix puts the mix number back as well.
 
 ### Header and ID
 
@@ -105,13 +118,26 @@ A column where no source line has a usable sign is left as it is and counted in 
 
 Open the first disk, press F1, open the second disk, press F3. The buffer survives opening disks, so one header can go onto as many disks as you like. The same six actions are in the **Header** menu. "The ID" is all five characters a listing prints after the header, the two ID bytes and the DOS type next to them, because dir art uses all five.
 
+### Tag
+
+1. Switch to the **Tag** tab and **left-click** the first sign of the tag in a line that has it, the `/` of `BUMSDIBUMS/DELYSID`. The tag is everything from there to the end of the name; it is shown as the C64 draws it.
+2. Tick the lines that should get it and press **Set tag**. It lands right behind each name. A line that already ends with the tag is left alone, and so is a line where name and tag together would be longer than 16 signs; those are counted in the status.
+3. New group? **Right-click** the first sign of the new tag somewhere, or type it in *New tag*, and press **Change tag to new tag**. Every ticked line that ends with the old tag gets the new one.
+
+A name keeps the padding it had. Real files are only touched when you tick them, and the tool asks first, as everywhere else.
+
+### Extras
+
+- **Background colour** and **Letter colour**: the sixteen colours of the machine.
+- **Save directory as picture...** (Ctrl+P) writes the whole listing as a PNG, header to `BLOCKS FREE.`, in the colours on screen. Made for bug reports: one picture says more than a description.
+
 ### Saving
 
-Everything above changes the picture in the window only. **Save** rewrites the file; **Save As** suggests `<name>-dirart.d64` next to it. **Undo** steps back through replaces, mixes and header writes alike.
+Everything above changes the picture in the window only. **Save** rewrites the file; **Save As** suggests `<name>-dirart.d64` next to it. **Undo** steps back through replaces, mixes, tags and header writes alike, **Redo** (Ctrl+Y) brings a step back, and both go grey when there is nothing left to do.
 
 Ticking a real file and applying a change that would touch its name asks first, once per disk, because it changes the name you `LOAD`. Closing or opening with unsaved changes asks too.
 
-Keyboard: Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+Z, F1 to F7 as above.
+Keyboard: Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+Z, Ctrl+Y, Ctrl+P, T and U for the ticks, F1 to F7 as above.
 
 ## Command line
 
@@ -122,6 +148,9 @@ dirarttool disk.d64 --replace A0=20 --all-rows -o out.d64       # real files too
 dirarttool disk.d64 --mask 1 --mask-from 1-7                    # fill every 1 from lines 1-7
 dirarttool disk.d64 --mask 1 --mask-from 1-7 --seed 7 --dry-run # this exact mix, just show me
 dirarttool disk.d64 --header-from other.d64 --id-from other.d64 # header and ID of another disk
+dirarttool disk.d64 --set-tag /delysid --rows 5-9               # the tag behind these names
+dirarttool disk.d64 --change-tag /delysid=-triad                # new group, every art row
+dirarttool disk.d64 --picture listing.png                       # the listing as a picture
 dirarttool                                                      # the window
 dirarttool disk.d64                                             # the window, with this disk
 ```
@@ -129,6 +158,9 @@ dirarttool disk.d64                                             # the window, wi
 - `--replace FROM=TO`, repeatable. Each side is **two hex digits** (`D6`, the way dir artists talk about PETSCII) or **one printable character** (`X`, `0`, `-`; letters are uppercased). Hex wins when both readings fit: `10` is $10, not the digits 1 and 0. All replacements are applied in one pass per cell, so `--replace A=B --replace B=A` swaps the two.
 - To replace the minus sign itself write it in hex (`2D=0`) or as `--replace=-=0`, because the shell's option parser reads `-=0` as an option. `==-` works as written: the first character is the one being replaced.
 - `--mask CHAR --mask-from ROWS` fills every CHAR in the chosen rows with signs from the same column of the ROWS lines. `--mask-from` is required: the tool does not guess which lines are art worth taking from. `--seed N` fixes the mix so a run can be repeated; without it every run mixes anew. With `--replace` in the same run, the replace happens first.
+- `--mask-mode column|any|piece` picks the mix: the same column of a source line (the default), any sign of the source lines, or a whole stretch of one source line.
+- `--set-tag TAG` puts the tag behind the name in the chosen rows; `--change-tag OLD=NEW` swaps it where a row ends with OLD. A tag is plain characters, or `hex:2F44...` for any signs. (In Git Bash a tag that starts with `/` is turned into a path by the shell; write it as hex there, or use cmd or PowerShell.)
+- `--picture OUT.PNG` saves the resulting listing as a picture. On its own it writes only the picture and leaves the disk alone.
 - `--header-from OTHER.D64` and `--id-from OTHER.D64` put the header, or the five ID characters, of another disk on this one. Give both for header and ID.
 - **Rows.** Without `--rows`, every art row. `--rows 1,2,3` picks rows by the index the listing shows; ranges work too, `--rows 1-7,21`.
 - **Real files.** `--all-rows` is the consent flag. Without it, the default scope skips real files, and naming one in `--rows` is refused with its name in the message, so a build script cannot rename a file by accident. `--rows 7 --all-rows` changes row 7 even though it is a file.
@@ -171,6 +203,7 @@ The window draws with the uppercase/graphics half of the C64 character ROM (9012
 - **35- and 40-track `.d64` only** (`174848`, `175531`, `196608`, `197376` bytes). No `.d71`, `.d81`, `.g64`.
 - **The directory must live on track 18.** The rare disk whose directory continues elsewhere is refused rather than handled.
 - **It does not add, remove or reorder rows**, and it does not edit file types or block counts. A header or ID can be taken over from another disk, not typed in. txt2dirart stamps rows; DirMaster does the rest.
+- **Tags are at the end of a name.** A sign in the middle of a name is the Replacer's job.
 - **It does not paint.** Replacing one character with another across rows is the whole idea; a cell-by-cell editor is a different tool.
 - **Uppercase set only.** Directory art is drawn for the charset a listing uses.
 
@@ -193,7 +226,7 @@ python tools/qa.py            # everything; read the last line
 python tools/qa.py --quick    # without the window checklist
 ```
 
-It runs the whole test suite, a stdlib-only smoke run of the tool, a byte-for-byte comparison of the Replacer's output on Baracuda's disk against the committed golden image (`tests/fixtures/golden-baracuda-replaced.d64`, rebuilt and verified by `tools/make_golden.py`), and `tools/qa_window.py`, which opens the real window and walks the nine-item release checklist by calling the same methods the buttons call. The last line is `QA: PASS` or `QA: FAIL <stage>`; nothing else counts.
+It runs the whole test suite, a stdlib-only smoke run of the tool, a byte-for-byte comparison of the Replacer's output on Baracuda's disk against the committed golden image (`tests/fixtures/golden-baracuda-replaced.d64`, rebuilt and verified by `tools/make_golden.py`), and `tools/qa_window.py`, which opens the real window and walks the ten-item release checklist by calling the same methods the buttons call. The last line is `QA: PASS` or `QA: FAIL <stage>`; nothing else counts.
 
 Release binaries are built by GitHub Actions with PyInstaller on `windows-latest` and `ubuntu-latest` when a `v*` tag is pushed. The workflow runs the tests first and refuses to build if they fail.
 

@@ -13,8 +13,9 @@ def load_mask_disk(fixture):
 
 
 def stamp_rows(data):
-    """The art rows that still hold the placeholder, in listing order."""
-    return [r.index for r in dt.directory(data) if r.kind == "art" and ONE in r.name]
+    """The stamp on the disk: lines 28 to 48. Three more lines further down
+    (51-53) hold the placeholder as well; they are not part of the stamp."""
+    return list(range(28, 49))
 
 
 def test_acceptance_baracuda_mask(fixture):
@@ -38,7 +39,7 @@ def test_acceptance_baracuda_mask(fixture):
                 else:
                     assert a.name[col] == r.name[col]     # the stamp's own signs stay
         else:
-            assert a.name == r.name          # the real files keep their "1"s too
+            assert a.name == r.name          # lines 51-53 keep their "1"s: not asked for
 
     assert len({after[i].name for i in targets}) == len(targets)
 
@@ -173,10 +174,14 @@ def test_row_lists_take_ranges():
 def test_cli_mask_dry_run_writes_nothing(fixture, run_tool):
     p = fixture("baracuda-mask-disk.d64")
     before = p.read_bytes()
-    r = run_tool(p, "--mask", "1", "--mask-from", "1-7", "--seed", "7", "--dry-run",
-                 expect_ok=True)
+    r = run_tool(p, "--mask", "1", "--mask-from", "1-7", "--seed", "7", "--rows", "28-48",
+                 "--dry-run", expect_ok=True)
     assert p.read_bytes() == before
     assert "255 cells filled" in r.stdout and "dry run" in r.stdout
+    # without --rows every art line that holds the placeholder is filled:
+    # the stamp and the three zero-block PRG lines under it
+    r = run_tool(p, "--mask", "1", "--mask-from", "1-7", "--dry-run", expect_ok=True)
+    assert "271 cells filled" in r.stdout
 
 
 def test_cli_mask_needs_its_source_lines(fixture, run_tool):
@@ -246,13 +251,14 @@ def test_cli_empty_row_lists_are_refused(fixture, run_tool):
 
 
 def test_cli_file_rows_still_need_consent(fixture, run_tool):
-    p = fixture("baracuda-mask-disk.d64")
+    p = fixture("examples.d64")                     # row 7 is the real file DEMO
     before = p.read_bytes()
-    idx = next(i for i, e in enumerate(d64reader.read_directory(p))
-               if not e.is_art and ONE in e.name_raw)
-    r = run_tool(p, "--mask", "1", "--mask-from", "1-7", "--rows", str(idx), "--dry-run",
+    idx = next(i for i, e in enumerate(d64reader.read_directory(p)) if not e.is_art)
+    r = run_tool(p, "--mask", "D", "--mask-from", "0", "--rows", str(idx), "--dry-run",
                  expect_ok=False)
     assert r.returncode == 2 and "--all-rows" in r.stderr
+    r = run_tool(p, "--mask", "D", "--mask-from", "0", "--dry-run", expect_ok=True)
+    assert "DEMO" in r.stdout                       # default rows leave it alone
     assert p.read_bytes() == before
 
 

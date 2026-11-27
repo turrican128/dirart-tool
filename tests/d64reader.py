@@ -47,8 +47,8 @@ class Entry:
 
     @property
     def is_art(self):
-        """Art rows are closed DELs owning no block."""
-        return (self.type_byte & 0x0F) == 0 and self.blocks == 0
+        """Art rows own no data: 0 blocks, and a DEL or a start track of 0 or 18."""
+        return self.blocks == 0 and ((self.type_byte & 0x0F) == 0 or self.raw[3] in (0, 18))
 
     @property
     def name(self):

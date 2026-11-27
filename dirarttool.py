@@ -30,7 +30,7 @@ import argparse
 import os
 import sys
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 DIR_TRACK = 18
 ENTRY_SIZE = 32
@@ -146,8 +146,19 @@ def read_chain(d):
 
 
 def is_art_entry(e):
-    """Art rows are DELs that own no block. Real files are everything else."""
-    return (e[2] & 0x0F) == 0 and (e[30] | e[31]) == 0
+    """Art rows own no data; real files are everything else.
+
+    A row is art when it shows 0 blocks and is a DEL, or points at track 0
+    (nowhere) or at track 18 (the directory itself, which is where dir art
+    editors point their rows). Dir artists use every file type for their
+    rows (PRG, SEQ, USR, REL and stranger ones), so the type alone decides
+    nothing. What is NOT art: an entry with 0 blocks whose start track is a
+    data track. That is the old trick of hiding a program's size, the file
+    behind it loads, and renaming it would break the loader that asks for it.
+    """
+    if (e[30] | e[31]) != 0:
+        return False
+    return (e[2] & 0x0F) == 0 or e[3] in (0, DIR_TRACK)
 
 
 def entry_name(e):
@@ -172,6 +183,9 @@ def display_name(e):
 # --------------------------------------------------------------------------
 # the engine: rows in, rows out, nothing else touched
 # --------------------------------------------------------------------------
+
+FILE_TYPES = {0: "del", 1: "seq", 2: "prg", 3: "usr", 4: "rel"}
+
 
 class Row:
     """One directory entry as the tool sees it.
@@ -200,9 +214,8 @@ class Row:
 
     @property
     def type_text(self):
-        if self.kind == "art":
-            return "del"
-        return {1: "seq", 2: "prg", 3: "usr", 4: "rel"}.get(self.ftype & 0x0F, "del")
+        """The type a listing prints, whatever kind of row this is."""
+        return FILE_TYPES.get(self.ftype & 0x0F, "???")
 
     def __repr__(self):
         return f"<Row {self.index} {self.kind} {self.name!r}>"
@@ -267,9 +280,10 @@ def replace(data, mapping, rows):
 
 
 MASK_TRIES = 50     # re-rolls of one line before two equal lines are accepted
+MASK_MODES = ("column", "any", "piece")
 
 
-def mask(data, placeholder, rows, sources, seed=None):
+def mask(data, placeholder, rows, sources, seed=None, mode="column"):
     """Fill the placeholder character with signs taken from other lines.
 
     rows     listing indexes of the lines to fill (the stamp)
@@ -278,19 +292,26 @@ def mask(data, placeholder, rows, sources, seed=None):
              test rows next to the art, and a mix of all of them is not
              what an artist is after. The artist says which lines look right.
     seed     fixes the mix; None shuffles differently every run
+    mode     how a sign is picked:
+             "column"  the sign in the same column of a random source line,
+                       so a column keeps the character of the art above it
+             "any"     any sign of the source lines, whatever its column
+             "piece"   every run of placeholders is filled with the same
+                       stretch of ONE source line, so signs that belong
+                       together stay together
 
-    Each placeholder cell takes the sign in the same column of a randomly
-    picked source line, so a column keeps the character of the art above it.
     A line that comes out equal to one already filled is mixed again (up to
     MASK_TRIES times), so every line looks different whenever the sources
     allow it. Source cells holding the placeholder, the $A0 pad or $00 are
-    never taken. A column with no candidate is left unchanged and counted.
+    never taken. A cell with nothing to take is left unchanged and counted.
 
     Returns (new image, cells filled, cells left). Like replace(), only the
     16 name bytes of the target rows can differ between data and the result.
     """
     import random                     # lazy: the release build's module list is tuned
 
+    if mode not in MASK_MODES:
+        raise BadArgs(f"no such mix '{mode}': use one of {', '.join(MASK_MODES)}")
     listing = directory(data)
     wanted = sorted(set(rows))
     if wanted and (wanted[0] < 0 or wanted[-1] >= len(listing)):
@@ -304,12 +325,33 @@ def mask(data, placeholder, rows, sources, seed=None):
         raise BadArgs(f"no such source row {bad[0]}: this disk has rows "
                       f"0..{len(listing) - 1}")
 
-    columns = [[] for _ in range(NAME_LEN)]
-    for i in picked:
-        for col in range(NAME_LEN):
-            b = listing[i].name[col]
-            if b not in (placeholder, PAD_SHIFTED, 0x00):
-                columns[col].append(b)
+    unusable = (placeholder, PAD_SHIFTED, 0x00)
+    lines = [listing[i].name for i in picked]
+    columns = [[n[col] for n in lines if n[col] not in unusable] for col in range(NAME_LEN)]
+    everything = [b for col in columns for b in col]
+
+    def runs(holes):
+        """[4, 5, 6, 9] -> [(4, 7), (9, 10)]: the stretches of placeholders."""
+        out = []
+        for col in holes:
+            if out and out[-1][1] == col:
+                out[-1] = (out[-1][0], col + 1)
+            else:
+                out.append((col, col + 1))
+        return out
+
+    def plan(name):
+        """What can be filled in this line: a list of (columns, candidates)."""
+        holes = [col for col in range(NAME_LEN) if name[col] == placeholder]
+        if mode == "piece":
+            jobs = []
+            for a, b in runs(holes):
+                pieces = [n[a:b] for n in lines if not any(x in unusable for x in n[a:b])]
+                jobs.append((list(range(a, b)), pieces))
+            return holes, jobs
+        if mode == "any":
+            return holes, [([col], [bytes([x]) for x in everything]) for col in holes]
+        return holes, [([col], [bytes([x]) for x in columns[col]]) for col in holes]
 
     rng = random.Random(seed)
     out = bytearray(data)
@@ -318,20 +360,23 @@ def mask(data, placeholder, rows, sources, seed=None):
     for i in wanted:
         start = listing[i].entry_offset + 5
         name = bytes(out[start:start + NAME_LEN])
-        holes = [col for col in range(NAME_LEN) if name[col] == placeholder]
-        fillable = [col for col in holes if columns[col]]
-        left += len(holes) - len(fillable)
+        holes, jobs = plan(name)
+        jobs = [(cols, cands) for cols, cands in jobs if cands]
+        fillable = sum(len(cols) for cols, _ in jobs)
+        left += len(holes) - fillable
         if not fillable:
             continue
         for _ in range(MASK_TRIES):
             new = bytearray(name)
-            for col in fillable:
-                new[col] = rng.choice(columns[col])
+            for cols, cands in jobs:
+                piece = rng.choice(cands)
+                for col, b in zip(cols, piece):
+                    new[col] = b
             if bytes(new) not in seen:
                 break
         seen.add(bytes(new))
         out[start:start + NAME_LEN] = new
-        filled += len(fillable)
+        filled += fillable
     return bytes(out), filled, left
 
 
@@ -376,6 +421,203 @@ def write_header(data, name=None, disk_id=None):
         out[bam + ID_AT:bam + ID_AT + ID_LEN] = disk_id
     changed = sum(1 for x, y in zip(data, out) if x != y)
     return bytes(out), changed
+
+
+def blocks_free(data):
+    """The number a listing ends with: free blocks on tracks 1-35 without 18."""
+    track_count(data)
+    bam = offset(DIR_TRACK, 0)
+    return sum(data[bam + 4 * t] for t in range(1, 36) if t != DIR_TRACK)
+
+
+# ---- tags: the group sign behind a name -----------------------------------
+#
+# "BUMSDIBUMS/DELYSID": the tag is "/DELYSID". Baracuda calls it a mask too;
+# here it is a tag, so the two features do not share a word.
+
+def name_text(name):
+    """The visible part of a 16-byte name, and the byte it is padded with."""
+    raw = bytes(name)
+    end = len(raw)
+    while end and raw[end - 1] in (PAD_SHIFTED, 0x20):
+        end -= 1
+    pad = raw[end] if end < len(raw) else PAD_SHIFTED
+    return raw[:end], pad
+
+
+def tag_at(name, col):
+    """The tag that starts at cell `col` of a name: from there to its end."""
+    text, _ = name_text(name)
+    if not 0 <= col < len(text):
+        raise BadArgs("there is no sign at that place to start a tag with")
+    return text[col:]
+
+
+def _check_tag(tag, what="tag"):
+    # A blank at the end of a tag cannot be told from the padding behind a
+    # name, so "/X " would never be found again and be added a second time.
+    tag = bytes(tag or b"").rstrip(bytes([0x20, PAD_SHIFTED]))
+    if not 1 <= len(tag) <= NAME_LEN:
+        raise BadArgs(f"a {what} is 1 to {NAME_LEN} signs, got {len(tag)}")
+    return tag
+
+
+def _retag(data, rows, make):
+    """Rewrite the names of `rows` with make(text) -> new text, None = skip."""
+    listing = directory(data)
+    wanted = sorted(set(rows))
+    if wanted and (wanted[0] < 0 or wanted[-1] >= len(listing)):
+        bad = [i for i in wanted if i < 0 or i >= len(listing)]
+        raise BadArgs(f"no such row {bad[0]}: this disk has rows 0..{len(listing) - 1}")
+    out = bytearray(data)
+    done = no_room = 0
+    for i in wanted:
+        text, pad = name_text(listing[i].name)
+        new = make(text)
+        if new is None:
+            continue
+        if len(new) > NAME_LEN:
+            no_room += 1
+            continue
+        start = listing[i].entry_offset + 5
+        out[start:start + NAME_LEN] = new + bytes([pad]) * (NAME_LEN - len(new))
+        done += 1
+    return bytes(out), done, no_room
+
+
+def set_tag(data, rows, tag):
+    """Put `tag` right behind the name in each of `rows`.
+
+    A line that already ends with the tag is left alone. A line where name
+    and tag together are longer than 16 signs is left alone and counted.
+    Returns (new image, lines tagged, lines with no room).
+    """
+    tag = _check_tag(tag)
+    return _retag(data, rows, lambda text: None if text.endswith(tag) else text + tag)
+
+
+def change_tag(data, rows, old, new):
+    """Swap the tag `old` for `new` in every one of `rows` that ends with it.
+
+    Returns (new image, lines changed, lines with no room for the new tag).
+    """
+    old, new = _check_tag(old, "tag"), _check_tag(new, "new tag")
+    if old == new:
+        raise BadArgs("the tag and the new tag are the same")
+    return _retag(data, rows,
+                  lambda text: text[:-len(old)] + new if text.endswith(old) else None)
+
+
+def parse_tag(text):
+    """A tag on the command line: plain characters, or hex:2F44... for any signs."""
+    if text.lower().startswith("hex:"):
+        try:
+            raw = bytes.fromhex(text[4:])
+        except ValueError:
+            raise BadArgs(f"'{text}' is not hex: write it like hex:2F44454C")
+    elif all(32 <= ord(c) < 127 for c in text):
+        raw = text.upper().encode("ascii")
+    else:
+        raise BadArgs(f"'{text}' is not a tag: plain characters, or hex:2F44...")
+    return _check_tag(raw)
+
+
+# ---- the listing as the C64 draws it, for a picture --------------------------
+
+LIST_COLUMNS = 40
+
+
+def listing_screen(data):
+    """The directory as LIST shows it: lines of (screen code, reversed) cells.
+
+    The header is in reverse as on the machine, a name's closing quote stands
+    where the drive prints it, and the last line is the blocks free.
+    """
+    def text(chars, rev=False):
+        return [(petscii_to_screen(ord(c))[0], rev) for c in chars]
+
+    def raw(bytes_, rev=False):
+        cells = []
+        for b in bytes_:
+            code, r = petscii_to_screen(0x20 if b == PAD_SHIFTED else b)
+            cells.append((code, r != rev))
+        return cells
+
+    lines = [text("0 ") + text('"', True) + raw(read_header(data), True)
+             + text('" ', True) + raw(read_id(data), True)]
+    for r in directory(data):
+        blocks = str(r.blocks)
+        line = text(blocks + " " + " " * max(0, 3 - len(blocks)) + '"')
+        cells, quote_col, _ = listing_columns(r.name)
+        for col, _raw, shown, rev in cells:
+            line.append(text('"')[0] if col == quote_col else
+                        (petscii_to_screen(shown)[0], rev))
+        if quote_col == 17:
+            line += text('"')
+        else:
+            line += text(" ")
+        line += text((" " if r.ftype & 0x80 else "*") + r.type_text.upper()
+                     + ("<" if r.ftype & 0x40 else " "))
+        lines.append(line)
+    lines.append(text(f"{blocks_free(data)} BLOCKS FREE."))
+    return lines
+
+
+def _rgb(colour):
+    return bytes(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def picture_png(data, ink="#867ade", paper="#40318d", scale=2):
+    """The whole directory as a PNG file's bytes, drawn with the C64 glyphs.
+
+    Written by hand with zlib so the tool stays stdlib-only: 8-bit RGB, one
+    filter-0 scanline after the other.
+    """
+    import struct
+    import zlib
+
+    lines = listing_screen(data)
+    margin = 8 * scale
+    width = LIST_COLUMNS * 8 * scale + 2 * margin
+    on, off = _rgb(ink) * scale, _rgb(paper) * scale
+    blank = b"\x00" + _rgb(paper) * width
+    strips = {}                         # (code, reversed, pixel row) -> scaled RGB bytes
+
+    def strip(code, rev, y):
+        key = (code, rev, y)
+        if key not in strips:
+            bits = glyph(code)[y]
+            strips[key] = b"".join(
+                on if bool(bits & (0x80 >> x)) != rev else off for x in range(8))
+        return strips[key]
+
+    rows = [blank] * margin
+    side = _rgb(paper) * margin
+    for line in lines:
+        line = (line + [(0x20, False)] * LIST_COLUMNS)[:LIST_COLUMNS]
+        for y in range(8):
+            scan = b"\x00" + side + b"".join(strip(c, r, y) for c, r in line) + side
+            rows.extend([scan] * scale)
+    rows.extend([blank] * margin)
+
+    def chunk(kind, body):
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, len(rows), 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"".join(rows), 9))
+            + chunk(b"IEND", b""))
+
+
+def save_picture(path, data, ink="#867ade", paper="#40318d", scale=2):
+    """Write the directory picture; a failure is a CannotWrite like any save."""
+    png = picture_png(data, ink, paper, scale)
+    try:
+        with open(path, "wb") as fh:
+            fh.write(png)
+    except OSError as exc:
+        raise CannotWrite(f"cannot write {path}: {exc}")
 
 
 def save(path, data):
@@ -621,15 +863,14 @@ def select_rows(rows, wanted, all_rows):
 def print_listing(data, rows, out=None):
     """What a LIST would show, with the row index the tool uses on the left."""
     out = out or sys.stdout
-    name, disk_id, dos = header(data)
     fake = bytes(5)
     print(file=out)
-    print(f'     {0:5} "{display_name(fake + name)}" '
-          f'{display_name(fake + disk_id + bytes(14))[:2]} '
-          f'{display_name(fake + dos + bytes(14))[:2]}', file=out)
+    print(f'     {0:5} "{display_name(fake + read_header(data))}" '
+          f'{display_name(fake + read_id(data) + bytes(11))[:ID_LEN]}', file=out)
     for r in rows:
         print(f'{r.index:3}  {r.blocks:5} "{display_name(fake + r.name)}" {r.type_text}',
               file=out)
+    print(f'     {blocks_free(data):5} blocks free.', file=out)
     print(file=out)
 
 
@@ -694,6 +935,17 @@ def build_parser():
                         "(needed with --mask)")
     p.add_argument("--seed", type=int, metavar="N",
                    help="fix the Mask's mix, so a run can be repeated exactly")
+    p.add_argument("--mask-mode", choices=MASK_MODES, default=None,
+                   help="how the Mask picks a sign: column = same column of a source "
+                        "line (default), any = any sign of the source lines, piece = "
+                        "a whole stretch of one source line")
+    p.add_argument("--set-tag", metavar="TAG",
+                   help="put TAG right behind the name in the chosen rows "
+                        "(plain characters, or hex:2F44... for any signs)")
+    p.add_argument("--change-tag", metavar="OLD=NEW",
+                   help="swap the tag OLD for NEW in the chosen rows that end with OLD")
+    p.add_argument("--picture", metavar="OUT.PNG",
+                   help="save the resulting directory as a picture")
     p.add_argument("--header-from", metavar="OTHER.D64",
                    help="put the header (disk name) of OTHER.D64 on this disk")
     p.add_argument("--id-from", metavar="OTHER.D64",
@@ -722,6 +974,18 @@ GREY = "#808080"
 CELL = 8                # glyph size in C64 pixels
 CREDITS = "code DR.J/Delysid, idea and test disk Baracuda/Blazon"
 
+# The sixteen colours of the machine, for the Extras menu. Blue and light blue
+# are the two the window has always used, so the defaults sit in the list.
+C64_COLOURS = (
+    ("black", "#000000"), ("white", "#ffffff"), ("red", "#883932"),
+    ("cyan", "#67b6bd"), ("purple", "#8b3f96"), ("green", "#55a049"),
+    ("blue", BLUE), ("yellow", "#bfce72"), ("orange", "#8b5429"),
+    ("brown", "#574200"), ("light red", "#b86962"), ("dark grey", "#505050"),
+    ("grey", "#787878"), ("light green", "#94e089"), ("light blue", LIGHT_BLUE),
+    ("light grey", "#9f9f9f"),
+)
+PALETTE_COLUMNS = 32    # the PETSCII table is 32 x 8: wide and low, so the window stays short
+
 
 class App:
     """The window: the Replacer, the Mask and the header buffer. Holds a tk
@@ -748,7 +1012,12 @@ class App:
         self.image = None           # the in-memory .d64
         self.on_disk = None         # what the file held when opened or last saved
         self.rows = []
-        self.undo_stack = []
+        self.undo_stack = []        # images to go back to, oldest first
+        self._undo_mix = []         # the mix number each of them was made with
+        self.redo_stack = []        # (image, mix number) pairs Undo took away
+        self.paper, self.ink = BLUE, LIGHT_BLUE
+        self.tag = None             # the tag (group sign) picked in the Tag tab
+        self.new_tag = None         # what Change tag turns it into
         self.src = None             # From, a PETSCII byte
         self.dst = None             # To
         self.mask_char = None       # the Mask's placeholder byte
@@ -785,8 +1054,13 @@ class App:
         filemenu.add_separator()
         filemenu.add_command(label="Quit", command=self.quit)
         menubar.add_cascade(label="File", menu=filemenu)
-        editmenu = tk.Menu(menubar, tearoff=0)
+        editmenu = self.editmenu = tk.Menu(menubar, tearoff=0)
         editmenu.add_command(label="Undo", accelerator="Ctrl+Z", command=self.undo)
+        editmenu.add_command(label="Redo", accelerator="Ctrl+Y", command=self.redo)
+        editmenu.add_separator()
+        editmenu.add_command(label="Tick all lines", accelerator="T", command=self.tick_all)
+        editmenu.add_command(label="Untick all lines", accelerator="U",
+                             command=self.untick_all)
         menubar.add_cascade(label="Edit", menu=editmenu)
         headmenu = tk.Menu(menubar, tearoff=0)
         for label, key, command in (
@@ -804,6 +1078,17 @@ class App:
             headmenu.add_command(label=label, accelerator=key, command=command)
             root.bind(f"<{key}>", lambda e, c=command: c())
         menubar.add_cascade(label="Header", menu=headmenu)
+        extras = tk.Menu(menubar, tearoff=0)
+        for label, which in (("Background colour", "paper"), ("Letter colour", "ink")):
+            pick = tk.Menu(extras, tearoff=0)
+            for name, value in C64_COLOURS:
+                pick.add_command(label=name,
+                                 command=lambda w=which, v=value: self.set_colours(**{w: v}))
+            extras.add_cascade(label=label, menu=pick)
+        extras.add_separator()
+        extras.add_command(label="Save directory as picture...", accelerator="Ctrl+P",
+                           command=self.save_picture_dialog)
+        menubar.add_cascade(label="Extras", menu=extras)
         helpmenu = tk.Menu(menubar, tearoff=0)
         helpmenu.add_command(label="About", command=self.about)
         menubar.add_cascade(label="Help", menu=helpmenu)
@@ -812,6 +1097,15 @@ class App:
         root.bind("<Control-s>", lambda e: self.save())
         root.bind("<Control-S>", lambda e: self.save_as_dialog())
         root.bind("<Control-z>", lambda e: self.undo())
+        root.bind("<Control-y>", lambda e: self.redo())
+        root.bind("<Control-Z>", lambda e: self.redo())
+        root.bind("<Control-p>", lambda e: self.save_picture_dialog())
+        # T and U tick and untick every line, except while a box is being typed in.
+        for key, command in (("t", self.tick_all), ("u", self.untick_all)):
+            for k in (key, key.upper()):
+                root.bind(f"<Key-{k}>", lambda e, c=command: self._plain_key(e, c))
+        for wheel in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            root.bind(wheel, self._wheel)
 
         bar = ttk.Frame(root, padding=(6, 4))
         bar.pack(fill="x")
@@ -821,6 +1115,8 @@ class App:
         ttk.Button(bar, text="Save As...", command=self.save_as_dialog).pack(side="left", padx=(4, 0))
         self.undo_btn = ttk.Button(bar, text="Undo", command=self.undo)
         self.undo_btn.pack(side="left", padx=(12, 0))
+        self.redo_btn = ttk.Button(bar, text="Redo", command=self.redo)
+        self.redo_btn.pack(side="left", padx=(4, 0))
         self.file_label = ttk.Label(bar, text="no disk open", foreground=GREY)
         self.file_label.pack(side="right")
 
@@ -830,8 +1126,10 @@ class App:
         self.notebook.pack(side="right", fill="y", padx=(6, 0))
         replace_tab = ttk.Frame(self.notebook, padding=4)
         mask_tab = ttk.Frame(self.notebook, padding=4)
+        tag_tab = ttk.Frame(self.notebook, padding=4)
         self.notebook.add(replace_tab, text="Replace")
         self.notebook.add(mask_tab, text="Mask")
+        self.notebook.add(tag_tab, text="Tag")
 
         # replace panel
         panel = ttk.LabelFrame(replace_tab, text="Replace", padding=8)
@@ -865,24 +1163,64 @@ class App:
         self.mask_seed = tk.StringVar(value="1")
         ttk.Entry(mpanel, textvariable=self.mask_seed, width=8).grid(
             row=2, column=1, sticky="w", pady=2)
+        self.mask_mode = tk.StringVar(value="column")
+        ttk.Label(mpanel, text="Take").grid(row=3, column=0, sticky="nw", pady=(8, 0))
+        modes = ttk.Frame(mpanel)
+        modes.grid(row=3, column=1, sticky="w", pady=(8, 0))
+        for value, label in (("column", "same column"), ("any", "any column"),
+                             ("piece", "whole pieces")):
+            ttk.Radiobutton(modes, text=label, variable=self.mask_mode, value=value,
+                            command=self._refresh_apply).pack(anchor="w")
         self.mask_btn = ttk.Button(mpanel, text="Mix and fill", command=self.apply_mask)
-        self.mask_btn.grid(row=3, column=0, columnspan=2, pady=(14, 4), sticky="ew")
-        self.mask_label = ttk.Label(mpanel, text="", foreground=GREY)
-        self.mask_label.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.mask_btn.grid(row=4, column=0, columnspan=2, pady=(12, 4), sticky="ew")
+        self.mask_label = ttk.Label(mpanel, text="", foreground=GREY, wraplength=200,
+                                    justify="left")
+        self.mask_label.grid(row=5, column=0, columnspan=2, sticky="w")
         ttk.Label(mpanel, text="left click a sign = the sign to fill\n"
                                "right click a line = take signs\n"
                                "from it (or type lines: 1-7)\n\n"
                                "The ticked lines are filled. Press\n"
                                "the button again for another mix.",
-                  foreground=GREY, justify="left").grid(row=5, column=0, columnspan=2,
-                                                        sticky="w", pady=(16, 0))
+                  foreground=GREY, justify="left").grid(row=6, column=0, columnspan=2,
+                                                        sticky="w", pady=(10, 0))
 
-        # directory pane, shared by both tabs: a canvas that scrolls if the
-        # directory is long
-        dir_frame = ttk.LabelFrame(work, text="Directory", padding=4)
-        dir_frame.pack(side="left", fill="both", expand=True)
-        self.dir_canvas = tk.Canvas(dir_frame, bg=BLUE, highlightthickness=0,
-                                    width=self._x(29) + 120, height=self._y(12))
+        # tag panel: the group sign behind a name, BUMSDIBUMS/DELYSID
+        tpanel = ttk.LabelFrame(tag_tab, text="Tag", padding=8)
+        tpanel.pack(side="left", fill="y")
+        self._tag_guard = False
+        self.tag_text, self.new_tag_text = tk.StringVar(), tk.StringVar()
+        self.tag_strip = self._tag_row(tpanel, "Tag", 0, self.tag_text)
+        self.new_tag_strip = self._tag_row(tpanel, "New tag", 2, self.new_tag_text)
+        self.tag_text.trace_add("write", lambda *a: self._tag_typed("tag"))
+        self.new_tag_text.trace_add("write", lambda *a: self._tag_typed("new_tag"))
+        self.set_tag_btn = ttk.Button(tpanel, text="Set tag", command=self.apply_set_tag)
+        self.set_tag_btn.grid(row=4, column=0, columnspan=2, pady=(12, 2), sticky="ew")
+        self.change_tag_btn = ttk.Button(tpanel, text="Change tag to new tag",
+                                         command=self.apply_change_tag)
+        self.change_tag_btn.grid(row=5, column=0, columnspan=2, pady=2, sticky="ew")
+        self.tag_label = ttk.Label(tpanel, text="", foreground=GREY, wraplength=250,
+                                   justify="left")
+        self.tag_label.grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Label(tpanel, text="left click a sign = the tag starts\n"
+                               "there and runs to the end of the\n"
+                               "name\n"
+                               "right click a sign = the same for\n"
+                               "the new tag (or type one)\n\n"
+                               "Set tag puts the tag behind the\n"
+                               "name in the ticked lines.\n"
+                               "Change tag swaps it for the new\n"
+                               "tag wherever a ticked line has it.",
+                  foreground=GREY, justify="left").grid(row=7, column=0, columnspan=2,
+                                                        sticky="w", pady=(10, 0))
+
+        # directory pane, shared by all tabs: a canvas that scrolls if the
+        # directory is long, and grows with the window
+        left = ttk.Frame(work)
+        left.pack(side="left", fill="both", expand=True)
+        dir_frame = ttk.LabelFrame(left, text="Directory", padding=4)
+        dir_frame.pack(fill="both", expand=True)
+        self.dir_canvas = tk.Canvas(dir_frame, bg=self.paper, highlightthickness=0,
+                                    width=self._x(29) + 120, height=self._y(22))
         vbar = ttk.Scrollbar(dir_frame, orient="vertical", command=self.dir_canvas.yview)
         self.dir_canvas.configure(yscrollcommand=vbar.set)
         self.dir_canvas.pack(side="left", fill="both", expand=True)
@@ -893,12 +1231,13 @@ class App:
 
         # palette
         pal_frame = ttk.LabelFrame(
-            root, text="PETSCII  (Replace: left click = From, right click = To;  "
+            left, text="PETSCII  (Replace: left click = From, right click = To;  "
                        "Mask: left click = the sign to fill)", padding=4)
-        pal_frame.pack(fill="x", padx=6, pady=(4, 0))
-        side = 16 * (CELL * self.scale + 4) + 4
-        self.pal_canvas = tk.Canvas(pal_frame, bg=BLUE, highlightthickness=0,
-                                    width=side, height=side)
+        pal_frame.pack(fill="x", pady=(4, 0))
+        pitch = CELL * self.scale + 4
+        self.pal_canvas = tk.Canvas(pal_frame, bg=self.paper, highlightthickness=0,
+                                    width=PALETTE_COLUMNS * pitch + 4,
+                                    height=(256 // PALETTE_COLUMNS) * pitch + 4)
         self.pal_canvas.pack()
         self.pal_canvas.bind("<Button-1>", lambda e: self._pick(e, self.pal_canvas, "from"))
         self.pal_canvas.bind("<Button-3>", lambda e: self._pick(e, self.pal_canvas, "to"))
@@ -917,12 +1256,24 @@ class App:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
         frame = ttk.Frame(parent)
         frame.grid(row=row, column=1, sticky="w", pady=2)
-        box = tk.Canvas(frame, width=CELL * 3 + 4, height=CELL * 3 + 4, bg=BLUE,
+        box = tk.Canvas(frame, width=CELL * 3 + 4, height=CELL * 3 + 4, bg=self.paper,
                         highlightthickness=1, highlightbackground=GREY)
         box.pack(side="left")
         text = ttk.Label(frame, text="$--", width=5)
         text.pack(side="left", padx=(6, 0))
         return box, text
+
+    def _tag_row(self, parent, label, row, var):
+        """A tag: its signs drawn as the C64 shows them, and a box to type one."""
+        tk, ttk = self.tk, self.ttk
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(parent, textvariable=var, width=18).grid(row=row, column=1, sticky="w",
+                                                           pady=(6, 0))
+        strip = tk.Canvas(parent, width=NAME_LEN * CELL * self.scale + 4,
+                          height=CELL * self.scale + 4, bg=self.paper,
+                          highlightthickness=1, highlightbackground=GREY)
+        strip.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        return strip
 
     # ---- drawing ------------------------------------------------------------
 
@@ -939,7 +1290,7 @@ class App:
         img = self._glyphs.get(key)
         if img is None:
             rows = glyph(screen_code)
-            ink, paper = (BLUE, LIGHT_BLUE) if reversed_ else (LIGHT_BLUE, BLUE)
+            ink, paper = (self.paper, self.ink) if reversed_ else (self.ink, self.paper)
             img = self.tk.PhotoImage(width=CELL * scale, height=CELL * scale)
             lines = []
             for byte in rows:
@@ -960,13 +1311,14 @@ class App:
                             anchor="nw", tags=tags)
 
     def _draw_palette(self):
-        """All 256 PETSCII bytes in a 16 x 16 grid, a small gap between cells."""
+        """All 256 PETSCII bytes, 32 to a row, a small gap between cells."""
         c = self.pal_canvas
         c.delete("all")
         pitch = CELL * self.scale + 4
         for b in range(256):
             code, rev = petscii_to_screen(b)
-            c.create_image(2 + (b % 16) * pitch, 2 + (b // 16) * pitch,
+            c.create_image(2 + (b % PALETTE_COLUMNS) * pitch,
+                           2 + (b // PALETTE_COLUMNS) * pitch,
                            image=self._glyph_image(code, rev), anchor="nw",
                            tags=("pal", f"b{b}"))
 
@@ -987,18 +1339,18 @@ class App:
         c.delete("all")
         if self.image is None:
             return
-        name, disk_id, dos = header(self.image)
+        name = read_header(self.image)
         x_text = 4                              # checkbox + index + blocks live here
         x_name = 120                            # where the opening quote starts
         quote = ord('"')
-        # header line, as LIST prints it
-        c.create_text(x_text + 60, self._y(0) + CELL, text="0", fill=LIGHT_BLUE,
+        # header line, as LIST prints it: the name, then all five ID signs
+        c.create_text(x_text + 90, self._y(0) + CELL, text="0", fill=self.ink,
                       anchor="e", font=("TkFixedFont",))
         self._put_petscii(c, quote, 0, 0, ("hdr",), x0=x_name)
         for i, b in enumerate(name):
             self._put_petscii(c, 0x20 if b == PAD_SHIFTED else b, 1 + i, 0, ("hdr",), x0=x_name)
         self._put_petscii(c, quote, 17, 0, ("hdr",), x0=x_name)
-        for i, b in enumerate(disk_id + b" " + dos):
+        for i, b in enumerate(read_id(self.image)):
             self._put_petscii(c, 0x20 if b == PAD_SHIFTED else b, 19 + i, 0, ("hdr",), x0=x_name)
         # one line per row
         for r, cb in zip(self.rows, self.row_checks):
@@ -1007,7 +1359,7 @@ class App:
             c.create_window(x_text, y + CELL * self.scale // 2, window=cb, anchor="w")
             c.create_text(x_text + 40, y + CELL, text=str(r.index), fill=GREY, anchor="e",
                           font=("TkFixedFont",))
-            c.create_text(x_text + 90, y + CELL, text=str(r.blocks), fill=LIGHT_BLUE,
+            c.create_text(x_text + 90, y + CELL, text=str(r.blocks), fill=self.ink,
                           anchor="e", font=("TkFixedFont",))
             cells, quote_col, type_col = listing_columns(r.name)
             self._put_petscii(c, quote, 0, line, ("q",), x0=x_name)
@@ -1020,12 +1372,75 @@ class App:
             if quote_col == 17:
                 self._put_petscii(c, quote, 17, line, ("q",), x0=x_name)
             c.create_text(x_name + self._x(type_col), y + CELL, text=r.type_text,
-                          fill=LIGHT_BLUE, anchor="w", font=("TkFixedFont",))
+                          fill=self.ink, anchor="w", font=("TkFixedFont",))
             c.create_text(x_name + self._x(type_col) + 40, y + CELL, text=r.kind,
                           fill=GREY, anchor="w", font=("TkFixedFont",))
-        c.configure(scrollregion=(0, 0, x_name + self._x(30), self._y(len(self.rows) + 1) + 4))
+        # the line every listing ends with
+        last = len(self.rows) + 1
+        free = str(blocks_free(self.image))
+        c.create_text(x_text + 90, self._y(last) + CELL, text=free, fill=self.ink,
+                      anchor="e", font=("TkFixedFont",))
+        for i, ch in enumerate("BLOCKS FREE."):
+            self._put_petscii(c, ord(ch), i, last, ("free",), x0=x_name)
+        c.configure(scrollregion=(0, 0, x_name + self._x(30), self._y(last + 1) + 4))
         self._draw_source_marks()
         self._register_drop_targets()       # the row checkboxes are new windows
+
+    def _wheel(self, event):
+        """Mouse wheel over the directory scrolls it, checkboxes included."""
+        if self.image is None:
+            return
+        under = self.root.winfo_containing(event.x_root, event.y_root)
+        while under is not None and under is not self.dir_canvas:
+            under = getattr(under, "master", None)
+        if under is None:
+            return
+        if getattr(event, "num", 0) in (4, 5):                  # X11
+            step = -3 if event.num == 4 else 3
+        else:
+            step = -3 if event.delta > 0 else 3
+        self.dir_canvas.yview_scroll(step, "units")
+        return "break"
+
+    def _plain_key(self, event, command):
+        """Run a one-letter shortcut, unless the letter is being typed into a box."""
+        if event.widget.winfo_class() in ("TEntry", "Entry"):
+            return
+        command()
+
+    def set_colours(self, paper=None, ink=None):
+        """Extras menu: draw everything in another two of the sixteen colours."""
+        paper, ink = paper or self.paper, ink or self.ink
+        if paper == ink:
+            self.status.configure(text="background and letters cannot be the same colour")
+            return False
+        self.paper, self.ink = paper, ink
+        self._glyphs.clear()
+        boxes = (self.from_box[0], self.to_box[0], self.mask_box[0],
+                 self.tag_strip, self.new_tag_strip)
+        for canvas in (self.dir_canvas, self.pal_canvas) + boxes:
+            canvas.configure(bg=paper)
+        self._draw_palette()
+        self._redraw_directory()
+        self._draw_picker(self.from_box, self.src)
+        self._draw_picker(self.to_box, self.dst)
+        self._draw_picker(self.mask_box, self.mask_char)
+        self._draw_tags()
+        return True
+
+    def _tick(self, on):
+        if not self.rows:
+            return False
+        for var in self.row_vars:
+            var.set(on)
+        self.status.configure(text=f"{len(self.rows)} lines {'ticked' if on else 'unticked'}")
+        return True
+
+    def tick_all(self):
+        return self._tick(True)
+
+    def untick_all(self):
+        return self._tick(False)
 
     def source_rows(self):
         """The Mask's source lines as the box has them, or None while it does
@@ -1050,7 +1465,7 @@ class App:
         for i in self.source_rows() or ():
             _cells, _quote, type_col = listing_columns(self.rows[i].name)
             c.create_text(120 + self._x(type_col) + 76, self._y(i + 1) + CELL, text="< take",
-                          fill=LIGHT_BLUE, anchor="w", font=("TkFixedFont",),
+                          fill=self.ink, anchor="w", font=("TkFixedFont",),
                           tags=("srcmark",))
 
     def _sources_changed(self):
@@ -1197,17 +1612,33 @@ class App:
                 return int(tag[1:])
         return None
 
-    def _tag_row(self, canvas):
+    def _tag_row_of(self, canvas):
         """The directory row of the cell under the pointer, or None."""
         for tag in canvas.gettags("current"):
             if tag.startswith("r") and tag[1:].isdigit():
                 return int(tag[1:])
         return None
 
+    def _tag_cell(self, canvas):
+        """(row, cell) of the directory sign under the pointer, or None."""
+        row = cell = None
+        for tag in canvas.gettags("current"):
+            if tag[:1] == "r" and tag[1:].isdigit():
+                row = int(tag[1:])
+            elif tag[:1] == "i" and tag[1:].isdigit():
+                cell = int(tag[1:])
+        return None if row is None or cell is None else (row, cell)
+
     def _pick(self, event, canvas, which):
-        if self.notebook.index(self.notebook.select()) == 1:    # the Mask tab
+        tab = self.notebook.index(self.notebook.select())
+        if tab == 2:                                            # the Tag tab
+            at = self._tag_cell(canvas) if canvas is self.dir_canvas else None
+            if at is not None:
+                self.pick_tag(at[0], at[1], new=(which == "to"))
+            return
+        if tab == 1:                                            # the Mask tab
             if which == "to":
-                row = self._tag_row(canvas) if canvas is self.dir_canvas else None
+                row = self._tag_row_of(canvas) if canvas is self.dir_canvas else None
                 if row is not None:
                     self.toggle_source(row)
                 return
@@ -1266,7 +1697,17 @@ class App:
         again = self._mask_preview is not None and self.image is self._mask_preview
         self.mask_btn.configure(state="normal" if mask_ok else "disabled",
                                 text="Mix again" if again else "Mix and fill")
-        self.undo_btn.configure(state="normal" if self.undo_stack else "disabled")
+        can_undo = "normal" if self.undo_stack else "disabled"
+        can_redo = "normal" if self.redo_stack else "disabled"
+        self.undo_btn.configure(state=can_undo)
+        self.redo_btn.configure(state=can_redo)
+        self.editmenu.entryconfigure("Undo", state=can_undo)
+        self.editmenu.entryconfigure("Redo", state=can_redo)
+        ticked = self.image is not None and bool(self.ticked_rows())
+        self.set_tag_btn.configure(state="normal" if ticked and self.tag else "disabled")
+        self.change_tag_btn.configure(
+            state="normal" if ticked and self.tag and self.new_tag
+            and self.tag != self.new_tag else "disabled")
         self.save_btn.configure(state="normal" if self.dirty else "disabled")
         self._refresh_title()
 
@@ -1314,11 +1755,12 @@ class App:
             self._error(exc)
             return False
         self.path, self.image, self.on_disk, self.rows = path, image, image, rows
-        self.undo_stack = []
+        self.undo_stack, self._undo_mix, self.redo_stack = [], [], []
         self._mask_preview = None
         self.warned_about_files = False
         self.last_label.configure(text="")
         self.mask_label.configure(text="")
+        self.tag_label.configure(text="")
         self._reset_ticks()
         if self.source_rows() is None:          # lines the last disk had, this one has not
             self.mask_sources.set("")
@@ -1333,15 +1775,8 @@ class App:
         rows = self.chosen_rows()
         files = [r for r in self.rows if r.index in rows and r.kind == "file"
                  and self.src in r.name]
-        if files and not self.warned_about_files:
-            from tkinter import messagebox
-            if not messagebox.askokcancel(
-                    "dirarttool",
-                    f"This changes the LOAD name of {files[0].load_name}"
-                    + (f" and {len(files) - 1} more" if len(files) > 1 else "")
-                    + ". Continue?", parent=self.root):
-                return 0
-            self.warned_about_files = True
+        if not self._consent(files):
+            return 0
         try:
             new, n = replace(self.image, {self.src: self.dst}, rows)
         except DirArtError as exc:
@@ -1352,7 +1787,7 @@ class App:
             self.status.configure(text="0 cells changed")
             return 0
         note = f"{n} cells changed"
-        self.undo_stack.append(self.image)
+        self._remember()
         self.image = new
         self.rows = directory(new)
         self._redraw_directory()
@@ -1392,27 +1827,21 @@ class App:
         ticked = set(self.ticked_rows())
         rows = [r.index for r in listing if r.index in ticked and self.mask_char in r.name]
         files = [listing[i] for i in rows if listing[i].kind == "file"]
-        if files and not self.warned_about_files:
-            from tkinter import messagebox
-            if not messagebox.askokcancel(
-                    "dirarttool",
-                    f"This changes the LOAD name of {files[0].load_name}"
-                    + (f" and {len(files) - 1} more" if len(files) > 1 else "")
-                    + ". Continue?", parent=self.root):
-                return 0
-            self.warned_about_files = True
+        if not self._consent(files):
+            return 0
         try:
-            new, filled, left = mask(base, self.mask_char, rows, sources=sources, seed=seed)
+            new, filled, left = mask(base, self.mask_char, rows, sources=sources,
+                                     seed=seed, mode=self.mask_mode.get())
         except DirArtError as exc:
             self._error(exc)
             return 0
-        note = f", {left} left (no sign to take in that column)" if left else ""
+        note = f", {left} left (no sign to take there)" if left else ""
         if filled == 0:
             self.mask_label.configure(text=f"0 cells filled{note}")
             self.status.configure(text=f"0 cells filled{note}")
             return 0
         if not again:
-            self.undo_stack.append(self.image)
+            self._remember()
         self.mask_seed.set(str(seed))
         self.image = self._mask_preview = new
         self.rows = directory(new)
@@ -1466,7 +1895,7 @@ class App:
         if changed == 0:
             self.status.configure(text=f"this disk already has that {what}")
             return False
-        self.undo_stack.append(self.image)
+        self._remember()
         self.image = new
         self._redraw_directory()
         self.status.configure(text=f"{what} written -- Save to keep it")
@@ -1491,14 +1920,165 @@ class App:
     def paste_both(self):
         return self._paste(True, True)
 
+    def _consent(self, files):
+        """Ask once per disk before the LOAD name of a real file is changed."""
+        if not files or self.warned_about_files:
+            return True
+        from tkinter import messagebox
+        if not messagebox.askokcancel(
+                "dirarttool",
+                f"This changes the LOAD name of {files[0].load_name}"
+                + (f" and {len(files) - 1} more" if len(files) > 1 else "")
+                + ". Continue?", parent=self.root):
+            return False
+        self.warned_about_files = True
+        return True
+
+    # ---- tags ---------------------------------------------------------------
+
+    def pick_tag(self, row, cell, new=False):
+        """Take the tag that starts at this sign and runs to the end of the name."""
+        try:
+            raw = tag_at(self.rows[row].name, cell)
+        except DirArtError as exc:
+            self.status.configure(text=str(exc))
+            return False
+        self._set_tag_bytes("new_tag" if new else "tag", raw)
+        self.status.configure(text=("new tag" if new else "tag") + f': "{self._shown(raw)}"')
+        return True
+
+    def _set_tag_bytes(self, which, raw):
+        setattr(self, which, raw)
+        var = self.tag_text if which == "tag" else self.new_tag_text
+        self._tag_guard = True
+        try:
+            var.set(self._shown(raw) if raw else "")
+        finally:
+            self._tag_guard = False
+        self._draw_tags()
+        self._refresh_apply()
+
+    def _tag_typed(self, which):
+        """A tag typed into its box: plain characters, as upper case PETSCII."""
+        if self._tag_guard:
+            return
+        var = self.tag_text if which == "tag" else self.new_tag_text
+        text = var.get()
+        text = text.rstrip()                # blanks at the end are padding, not tag
+        ok = text and len(text) <= NAME_LEN and all(32 <= ord(ch) < 127 for ch in text)
+        setattr(self, which, text.upper().encode("ascii") if ok else None)
+        self._draw_tags()
+        self._refresh_apply()
+
+    def _draw_tags(self):
+        for strip, raw in ((self.tag_strip, self.tag), (self.new_tag_strip, self.new_tag)):
+            strip.delete("all")
+            for i, b in enumerate(raw or b""):
+                code, rev = petscii_to_screen(0x20 if b == PAD_SHIFTED else b)
+                strip.create_image(2 + self._x(i), 2, image=self._glyph_image(code, rev),
+                                   anchor="nw")
+
+    def _tag_job(self, run, done_text, room_text):
+        """Shared by Set tag and Change tag: consent, engine call, undo, redraw."""
+        if self.image is None or not self.tag:
+            return 0
+        rows = self.ticked_rows()
+        try:
+            new, done, no_room = run(rows)
+        except DirArtError as exc:
+            self._error(exc)
+            return 0
+        after = directory(new)
+        files = [r for r, a in zip(self.rows, after) if r.kind == "file" and r.name != a.name]
+        if not self._consent(files):
+            return 0
+        note = done_text.format(done) + (room_text.format(no_room) if no_room else "")
+        self.tag_label.configure(text=note)
+        self.status.configure(text=note)
+        if done == 0:
+            return 0
+        self._remember()
+        self.image = new
+        self.rows = after
+        self._redraw_directory()
+        self._refresh_apply()
+        return done
+
+    def apply_set_tag(self):
+        """Put the tag behind the name in every ticked line that has room for it."""
+        return self._tag_job(lambda rows: set_tag(self.image, rows, self.tag),
+                             "tag set in {} lines", ", {} have no room for it")
+
+    def apply_change_tag(self):
+        """Swap the tag for the new tag wherever a ticked line ends with it."""
+        if not self.new_tag:
+            return 0
+        done = self._tag_job(lambda rows: change_tag(self.image, rows, self.tag, self.new_tag),
+                             "tag changed in {} lines", ", {} have no room for the new tag")
+        if done:
+            self._set_tag_bytes("tag", self.new_tag)        # the lines now carry the new one
+        return done
+
+    # ---- undo, redo ---------------------------------------------------------
+
+    def _remember(self):
+        """Call before changing self.image: one step for Undo, and Redo starts over."""
+        self.undo_stack.append(self.image)
+        self._undo_mix.append(self.mask_seed.get())
+        self.redo_stack = []
+
     def undo(self):
         if not self.undo_stack:
+            self.status.configure(text="nothing to undo")
             return False
+        self.redo_stack.append((self.image, self.mask_seed.get()))
         self.image = self.undo_stack.pop()
+        self.mask_seed.set(self._undo_mix.pop())        # a mix taken back takes its number back
         self.rows = directory(self.image)
         self._redraw_directory()
         self.last_label.configure(text="undone")
+        self.status.configure(text="undone" if self.undo_stack else "undone -- nothing more to undo")
         self._refresh_apply()
+        return True
+
+    def redo(self):
+        if not self.redo_stack:
+            self.status.configure(text="nothing to redo")
+            return False
+        image, mix = self.redo_stack.pop()
+        self.undo_stack.append(self.image)
+        self._undo_mix.append(self.mask_seed.get())
+        self.image = image
+        self.mask_seed.set(mix)
+        self.rows = directory(self.image)
+        self._redraw_directory()
+        self.last_label.configure(text="redone")
+        self.status.configure(text="redone")
+        self._refresh_apply()
+        return True
+
+    # ---- picture ------------------------------------------------------------
+
+    def save_picture_dialog(self):
+        from tkinter import filedialog
+        if self.image is None:
+            self.status.configure(text="open a disk first, then save its picture")
+            return False
+        stem, _ = os.path.splitext(os.path.basename(self.path))
+        path = filedialog.asksaveasfilename(
+            parent=self.root, title="Save the directory as a picture", defaultextension=".png",
+            initialdir=os.path.dirname(os.path.abspath(self.path)),
+            initialfile=f"{stem}.png", filetypes=[("PNG picture", "*.png")])
+        return self.save_picture(path) if path else False
+
+    def save_picture(self, path):
+        """The whole listing, header to blocks free, in the colours on screen."""
+        try:
+            save_picture(path, self.image, ink=self.ink, paper=self.paper)
+        except DirArtError as exc:
+            self._error(exc)
+            return False
+        self.status.configure(text=f"picture saved: {os.path.basename(path)}")
         return True
 
     def save(self):
@@ -1577,14 +2157,25 @@ def main(argv=None):
 
     mapping = parse_replace(args.replace) if args.replace else {}
     heading = args.header_from is not None or args.id_from is not None
-    if not mapping and args.mask is None and not heading:
-        raise BadArgs("nothing to do: give --replace FROM=TO, --mask CHAR, "
-                      "--header-from or --id-from")
-    if args.mask is None and (args.mask_from is not None or args.seed is not None):
-        raise BadArgs("--mask-from and --seed only make sense with --mask")
+    tagging = args.set_tag is not None or args.change_tag is not None
+    changing = bool(mapping) or args.mask is not None or heading or tagging
+    if not changing and args.picture is None:
+        raise BadArgs("nothing to do: give --replace FROM=TO, --mask CHAR, --set-tag, "
+                      "--change-tag, --header-from, --id-from or --picture")
+    if args.mask is None and (args.mask_from is not None or args.seed is not None
+                              or args.mask_mode is not None):
+        raise BadArgs("--mask-from, --mask-mode and --seed only make sense with --mask")
     if args.mask is not None and args.mask_from is None:
         raise BadArgs("--mask needs --mask-from: the lines to take the signs from, "
                       "like --mask-from 1-7")
+    swap = None
+    if args.change_tag is not None:
+        cut_at = args.change_tag.find("=", 1)
+        if cut_at == -1 or cut_at == len(args.change_tag) - 1:
+            raise BadArgs(f"--change-tag wants OLD=NEW, got '{args.change_tag}'")
+        swap = (parse_tag(args.change_tag[:cut_at]), parse_tag(args.change_tag[cut_at + 1:]))
+    new_tag = parse_tag(args.set_tag) if args.set_tag is not None else None
+
     data = load(args.d64)
     rows = directory(data)
     chosen = select_rows(rows, args.rows, args.all_rows)
@@ -1595,8 +2186,17 @@ def main(argv=None):
         # The Mask fills the stamp: the chosen rows that hold the placeholder.
         now = directory(result)
         mrows = [i for i in chosen if placeholder in now[i].name]
-        result, filled, left = mask(result, placeholder, mrows,
-                                    sources=args.mask_from, seed=args.seed)
+        result, filled, left = mask(result, placeholder, mrows, sources=args.mask_from,
+                                    seed=args.seed, mode=args.mask_mode or "column")
+    tag_notes = []
+    if swap is not None:
+        result, done, no_room = change_tag(result, chosen, *swap)
+        tag_notes.append(f"tag changed in {done} lines"
+                         + (f", {no_room} with no room for the new tag" if no_room else ""))
+    if new_tag is not None:
+        result, done, no_room = set_tag(result, chosen, new_tag)
+        tag_notes.append(f"tag set in {done} lines"
+                         + (f", {no_room} with no room for it" if no_room else ""))
     head = 0
     if heading:
         name = read_header(load(args.header_from)) if args.header_from else None
@@ -1609,15 +2209,22 @@ def main(argv=None):
         log(f"[*] {changed} cells changed")
     if args.mask is not None:
         log(f"[*] mask: {filled} cells filled"
-            + (f", {left} left (no sign to take in that column)" if left else ""))
+            + (f", {left} left (no sign to take there)" if left else ""))
+    for note in tag_notes:
+        log(f"[*] {note}")
     if heading:
         what = " and ".join(w for w, on in (("header", args.header_from),
                                             ("ID", args.id_from)) if on)
         log(f"[*] {what} taken over, {head} bytes changed")
+    if args.picture is not None:
+        save_picture(args.picture, result)
+        log(f"[*] picture -> {args.picture}")
 
     if args.dry_run:
         log("[*] dry run -- nothing written")
         return 0
+    if not changing:
+        return 0                        # only a picture was asked for: the disk stays as it is
 
     out = args.out or args.d64
     save(out, result)
