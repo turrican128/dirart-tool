@@ -12,7 +12,7 @@ Four stages, in order; the first failure stops the run:
   3. golden disk     the Replacer on Baracuda's disk must produce exactly the
                      committed golden image, byte for byte, through the CLI,
                      and must leave a copy run with -o untouched
-  4. window          tools/qa_window.py, the nine-item release checklist,
+  4. window          tools/qa_window.py, the ten-item release checklist,
                      skipped (not failed) when Tk has no display
 
 Ends with `QA: PASS` or `QA: FAIL <stage>`. Nothing else is a pass.

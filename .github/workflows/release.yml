@@ -99,6 +99,13 @@ jobs:
           "$BIN" smoke-in.d64 --header-from mask-in.d64 --id-from mask-in.d64 -o head-bin.d64
           python dirarttool.py smoke-in.d64 --header-from mask-in.d64 --id-from mask-in.d64 -o head-py.d64
           cmp head-bin.d64 head-py.d64
+          # 1.2.0: tags, the other mixes, and the picture (struct + zlib in the bundle).
+          # The tag is written as hex: Git Bash turns an argument that starts
+          # with a slash into a Windows path before the tool ever sees it.
+          "$BIN" mask-in.d64 --change-tag hex:2F424C5A=-triad --mask 1 --mask-from 1-7 --mask-mode piece --seed 7 -o tag-bin.d64 --picture tag-bin.png
+          python dirarttool.py mask-in.d64 --change-tag hex:2F424C5A=-triad --mask 1 --mask-from 1-7 --mask-mode piece --seed 7 -o tag-py.d64 --picture tag-py.png
+          cmp tag-bin.d64 tag-py.d64
+          cmp tag-bin.png tag-py.png
           set +e
           "$BIN" smoke-bin.d64 --replace D6=D1 --rows 7
           [ $? -eq 2 ] || { echo "::error::a row that does not exist should exit 2"; exit 1; }

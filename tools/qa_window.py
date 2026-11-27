@@ -84,12 +84,12 @@ def main():
     app.root.update()
     first = app.image
     stamp = [r for r in app.rows if 28 <= r.index <= 48]
-    filled = (n == 255
+    filled = (n == 271
               and all(0x31 not in r.name for r in app.rows if r.kind == "art")
               and len({r.name for r in stamp}) == len(stamp)
               and [r.name for r in app.rows if r.kind == "file"] == files_before
               and app.dirty)
-    again = app.apply_mask() == 255 and app.image != first and len(app.undo_stack) == 1
+    again = app.apply_mask() == 271 and app.image != first and len(app.undo_stack) == 1
     undone = app.undo()
     restored = any(0x31 in r.name for r in app.rows if r.kind == "art") and not app.dirty
     check(4, ok and refused and filled and again and undone and restored,
@@ -160,9 +160,37 @@ def main():
               "a .d64 dropped on the directory canvas (shell WM_DROPFILES) opens")
         app.set_from(0xD6)
         app.set_to(0xD1)
-        app.apply()                                  # unsaved again, so item 9 has something to ask about
+        app.apply()                                  # unsaved again, unsaved again
     else:
         print("--   8. drop test skipped: not Windows")
+
+    # Baracuda's report on 1.1.0, in one pass on his second disk
+    ok = app.open_path(maskdisk)
+    app.root.update()
+    c = app.dir_canvas
+    shown = (len(c.find_withtag("hdr")) == 23 and len(c.find_withtag("free")) == 12
+             and all(v.get() for v in app.row_vars))
+    app.notebook.select(2)
+    app.tag_text.set("/blz")
+    app.new_tag_text.set("-triad")
+    changed = app.apply_change_tag()
+    undone = app.undo() and str(app.undo_btn["state"]) == "disabled" and not app.undo()
+    redone = app.redo() and app.rows[54].name.startswith(b" -TRIAD")
+    shot = os.path.join(tmp, "listing.png")
+    pictured = app.save_picture(shot) and open(shot, "rb").read(4) == b"\x89PNG"
+    ticks = app.untick_all() and not app.ticked_rows() and app.tick_all()
+    coloured = app.set_colours(paper="#000000", ink="#ffffff") and app.set_colours(
+        paper=dt.BLUE, ink=dt.LIGHT_BLUE)
+    app.undo()
+    app.notebook.select(0)
+    check(9, ok and shown and changed == 10 and undone and redone and pictured and ticks
+          and coloured and not app.dirty,
+          "report on 1.1.0: all five ID signs and BLOCKS FREE shown, every line ticked, "
+          "tag /BLZ -> -TRIAD in 10 lines, Undo greys out, Redo, picture, tick/untick, colours")
+    app.open_path(fresh if sys.platform == "win32" else bara)
+    app.set_from(0xD6)
+    app.set_to(0xD1)
+    app.apply()                                      # unsaved, so the last item has something to ask
 
     asked.clear()
     app.quit()
@@ -173,7 +201,7 @@ def main():
         gone = not app.root.winfo_exists()
     except Exception:
         gone = True
-    check(9, alive and gone and any(k == "yesnocancel" for k, _ in asked),
+    check(10, alive and gone and any(k == "yesnocancel" for k, _ in asked),
           "quit with unsaved changes asks; Cancel keeps the window, Discard closes it")
 
     print("window checklist: all items passed")
